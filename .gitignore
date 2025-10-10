@@ -324,3 +324,5 @@ docker-compose.yaml
 
 # Kubernetes
 *.kubeconfig
+
+pdf/

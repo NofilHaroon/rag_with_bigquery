@@ -17,6 +17,7 @@ Prerequisites:
 import os
 import uuid
 import logging
+import glob
 from typing import List, Dict
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
@@ -65,6 +66,15 @@ try:
 except GoogleAPIError as e:
     logger.exception("Failed to initialize Google Cloud clients: %s", e)
     raise SystemExit(1)
+
+
+# === PDF File Discovery ===
+def get_pdf_files(pdf_directory: str) -> List[str]:
+    """Get all PDF files from the specified directory."""
+    pdf_pattern = os.path.join(pdf_directory, "*.pdf")
+    pdf_files = glob.glob(pdf_pattern)
+    logger.info(f"📁 Found {len(pdf_files)} PDF files in {pdf_directory}")
+    return pdf_files
 
 
 # === PDF Text Extraction ===
@@ -162,25 +172,24 @@ def insert_embeddings(rows: List[Dict]):
         logger.exception("Unexpected error inserting rows: %s", e)
 
 
-# === Main Process ===
-def main():
-    document_name = os.path.basename(PDF_PATH)
+# === Process Single Document ===
+def process_single_document(pdf_path: str) -> int:
+    """Process a single PDF document and return the number of chunks inserted."""
+    document_name = os.path.basename(pdf_path)
     document_id = str(uuid.uuid4())
 
-    logger.info(f"Starting document processing: {document_name}")
+    logger.info(f"📄 Starting document processing: {document_name}")
 
-    if not os.path.exists(PDF_PATH):
-        logger.error("❌ PDF file not found at path: %s", PDF_PATH)
-        raise FileNotFoundError(f"PDF file not found: {PDF_PATH}")
+    if not os.path.exists(pdf_path):
+        logger.error("❌ PDF file not found at path: %s", pdf_path)
+        raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
     try:
-        pages = extract_text_by_page(PDF_PATH)
+        pages = extract_text_by_page(pdf_path)
         logger.info("📄 Extracted %d pages from the document.", len(pages))
     except Exception as e:
         logger.exception("Failed to extract text from PDF: %s", e)
         raise
-
-    create_bq_table()
 
     all_rows = []
 
@@ -211,6 +220,51 @@ def main():
         document_name,
         len(all_rows),
     )
+    return len(all_rows)
+
+
+# === Main Process ===
+def main():
+    # Get PDF directory from environment or default to 'pdf'
+    pdf_directory = os.getenv("PDF_DIRECTORY", "pdf")
+    
+    logger.info(f"🚀 Starting batch processing of PDFs from directory: {pdf_directory}")
+    
+    # Get all PDF files from the directory
+    pdf_files = get_pdf_files(pdf_directory)
+    
+    if not pdf_files:
+        logger.warning(f"⚠️ No PDF files found in directory: {pdf_directory}")
+        return
+    
+    # Create BigQuery table once for all documents
+    create_bq_table()
+    
+    total_chunks = 0
+    successful_docs = 0
+    failed_docs = 0
+    
+    # Process each PDF file
+    for i, pdf_path in enumerate(pdf_files, 1):
+        try:
+            logger.info(f"📚 Processing document {i}/{len(pdf_files)}: {os.path.basename(pdf_path)}")
+            chunks_inserted = process_single_document(pdf_path)
+            total_chunks += chunks_inserted
+            successful_docs += 1
+        except Exception as e:
+            logger.exception(f"❌ Failed to process {os.path.basename(pdf_path)}: {e}")
+            failed_docs += 1
+            continue
+    
+    # Summary
+    logger.info("=" * 60)
+    logger.info("📊 BATCH PROCESSING SUMMARY")
+    logger.info("=" * 60)
+    logger.info(f"📁 Total PDF files found: {len(pdf_files)}")
+    logger.info(f"✅ Successfully processed: {successful_docs}")
+    logger.info(f"❌ Failed to process: {failed_docs}")
+    logger.info(f"📝 Total chunks inserted: {total_chunks}")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
