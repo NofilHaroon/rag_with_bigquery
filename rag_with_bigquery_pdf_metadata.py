@@ -152,6 +152,38 @@ def create_bq_table():
         logger.info(f"✅ Created table `{table_ref}`.")
 
 
+# === BigQuery Helpers ===
+def get_existing_document_names() -> set:
+    """Return a set of distinct document names already present in the table.
+
+    If the table does not exist yet, an empty set is returned.
+    """
+    table_ref = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
+    try:
+        # Ensure table exists or NotFound is thrown
+        bq_client.get_table(table_ref)
+    except Exception:
+        return set()
+
+    # Use tabledata.list via list_rows to avoid requiring bigquery.jobs.create
+    try:
+        rows = bq_client.list_rows(
+            table_ref,
+            selected_fields=[bigquery.SchemaField("document_name", "STRING")],
+        )
+        names = set()
+        for row in rows:
+            # Access by field name for clarity
+            name = row["document_name"]
+            if name:
+                names.add(name)
+        logger.info(f"🗂️ Found {len(names)} existing document names in BigQuery.")
+        return names
+    except GoogleAPIError as e:
+        logger.exception("Failed to fetch existing document names via list_rows: %s", e)
+        return set()
+
+
 # === BigQuery Insert ===
 def insert_embeddings(rows: List[Dict]):
     """Insert embeddings and metadata into BigQuery."""
@@ -223,31 +255,41 @@ def process_single_document(pdf_path: str) -> int:
     return len(all_rows)
 
 
-# === Main Process ===
-def main():
-    # Get PDF directory from environment or default to 'pdf'
-    pdf_directory = os.getenv("PDF_DIRECTORY", "pdf")
-    
-    logger.info(f"🚀 Starting batch processing of PDFs from directory: {pdf_directory}")
-    
-    # Get all PDF files from the directory
+# === Add New PDFs (Idempotent) ===
+def add_new_pdfs(pdf_directory: str) -> None:
+    """Process and insert only PDFs that are not yet in the BigQuery table.
+
+    Uses `document_name` (file basename) as the uniqueness key.
+    """
+    logger.info(f"🚀 Starting idempotent ingest from directory: {pdf_directory}")
+
+    # Ensure destination exists
+    create_bq_table()
+
+    # Discover local PDFs and already ingested names
     pdf_files = get_pdf_files(pdf_directory)
-    
     if not pdf_files:
         logger.warning(f"⚠️ No PDF files found in directory: {pdf_directory}")
         return
-    
-    # Create BigQuery table once for all documents
-    create_bq_table()
-    
+
+    existing_names = get_existing_document_names()
+
+    # Filter to only new PDFs
+    candidate_files = [p for p in pdf_files if os.path.basename(p) not in existing_names]
+
+    if not candidate_files:
+        logger.info("✅ No new PDFs to ingest. Everything is up to date.")
+        return
+
     total_chunks = 0
     successful_docs = 0
     failed_docs = 0
-    
-    # Process each PDF file
-    for i, pdf_path in enumerate(pdf_files, 1):
+
+    for i, pdf_path in enumerate(candidate_files, 1):
         try:
-            logger.info(f"📚 Processing document {i}/{len(pdf_files)}: {os.path.basename(pdf_path)}")
+            logger.info(
+                f"📚 Processing new document {i}/{len(candidate_files)}: {os.path.basename(pdf_path)}"
+            )
             chunks_inserted = process_single_document(pdf_path)
             total_chunks += chunks_inserted
             successful_docs += 1
@@ -255,16 +297,23 @@ def main():
             logger.exception(f"❌ Failed to process {os.path.basename(pdf_path)}: {e}")
             failed_docs += 1
             continue
-    
-    # Summary
+
     logger.info("=" * 60)
-    logger.info("📊 BATCH PROCESSING SUMMARY")
+    logger.info("📊 INGEST SUMMARY (new PDFs only)")
     logger.info("=" * 60)
-    logger.info(f"📁 Total PDF files found: {len(pdf_files)}")
-    logger.info(f"✅ Successfully processed: {successful_docs}")
+    logger.info(f"📁 Total PDFs discovered: {len(pdf_files)}")
+    logger.info(f"🆕 New PDFs processed: {successful_docs}")
+    logger.info(f"⛔ Skipped (already present): {len(pdf_files) - len(candidate_files)}")
     logger.info(f"❌ Failed to process: {failed_docs}")
     logger.info(f"📝 Total chunks inserted: {total_chunks}")
     logger.info("=" * 60)
+
+
+# === Main Process ===
+def main():
+    pdf_directory = os.getenv("PDF_PATH", "pdf")
+    # get_existing_document_names()
+    add_new_pdfs(pdf_directory)
 
 
 if __name__ == "__main__":
