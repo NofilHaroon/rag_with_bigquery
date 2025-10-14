@@ -67,7 +67,7 @@ Create a `.env` file in the project root:
 ```env
 # Google Cloud Configuration
 PROJECT_ID=your-gcp-project-id
-DATASET_ID=rag_demo
+DATASET_ID=rag_demo_v2
 TABLE_ID=document_embeddings_v2
 LOCATION=us-central1
 
@@ -150,13 +150,13 @@ rank	cosine	document_name	page	chunk	chunk_text
 ### Querying Embeddings in BigQuery
 ```sql
 -- Find all chunks from a specific document
-SELECT * FROM `your-project.rag_demo.document_embeddings_v2`
+SELECT * FROM `your-project.rag_demo_v2.document_embeddings_v2`
 WHERE document_name = 'your-document.pdf'
 ORDER BY page_number, chunk_index;
 
 -- Get chunks from a specific page
 SELECT chunk_text, embedding
-FROM `your-project.rag_demo.document_embeddings_v2`
+FROM `your-project.rag_demo_v2.document_embeddings_v2`
 WHERE document_name = 'your-document.pdf'
 AND page_number = 1;
 ```
@@ -188,7 +188,7 @@ rag_with_bigquery/
 - **Max Tokens**: 3,072
 
 ### BigQuery Settings
-- **Default Dataset**: `rag_demo`
+- **Default Dataset**: `rag_demo_v2`
 - **Default Table**: `document_embeddings_v2`
 - **Location**: `us-central1`
 

@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 PROJECT_ID = os.getenv("PROJECT_ID")
-DATASET_ID = os.getenv("DATASET_ID", "rag_demo")
+DATASET_ID = os.getenv("DATASET_ID", "rag_demo_v2")
 TABLE_ID = os.getenv("TABLE_ID", "document_embeddings_v2")
 LOCATION = os.getenv("LOCATION", "us-central1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gemini-embedding-001")
@@ -145,11 +145,17 @@ def create_bq_table():
         logger.error("PermissionDenied getting dataset: %s", getattr(e, "errors", str(e)))
         raise
     except ClientError as e:
-        logger.error("ClientError getting dataset: %s", getattr(e, "errors", str(e)))
+        # Check if the error is "notFound" - if so, create the dataset
+        if hasattr(e, 'errors') and e.errors and e.errors[0].get('reason') == 'notFound':
+            logger.info(f"Dataset `{DATASET_ID}` not found. Creating it...")
+            bq_client.create_dataset(bigquery.Dataset(dataset_ref))
+            logger.info(f"✅ Created dataset `{DATASET_ID}`.")
+        else:
+            logger.error("ClientError getting dataset: %s", getattr(e, "errors", str(e)))
+            raise
+    except Exception as e:
+        logger.error("Unexpected error getting dataset: %s", e)
         raise
-    except Exception:
-        bq_client.create_dataset(bigquery.Dataset(dataset_ref))
-        logger.info(f"✅ Created dataset `{DATASET_ID}`.")
 
     try:
         bq_client.get_table(table_ref)
@@ -158,12 +164,18 @@ def create_bq_table():
         logger.error("PermissionDenied getting table: %s", getattr(e, "errors", str(e)))
         raise
     except ClientError as e:
-        logger.error("ClientError getting table: %s", getattr(e, "errors", str(e)))
+        # Check if the error is "notFound" - if so, create the table
+        if hasattr(e, 'errors') and e.errors and e.errors[0].get('reason') == 'notFound':
+            logger.info(f"Table `{table_ref}` not found. Creating it...")
+            table = bigquery.Table(table_ref, schema=schema)
+            bq_client.create_table(table)
+            logger.info(f"✅ Created table `{table_ref}`.")
+        else:
+            logger.error("ClientError getting table: %s", getattr(e, "errors", str(e)))
+            raise
+    except Exception as e:
+        logger.error("Unexpected error getting table: %s", e)
         raise
-    except Exception:
-        table = bigquery.Table(table_ref, schema=schema)
-        bq_client.create_table(table)
-        logger.info(f"✅ Created table `{table_ref}`.")
 
 
 # === BigQuery Helpers ===

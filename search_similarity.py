@@ -43,7 +43,7 @@ def load_config() -> Dict[str, Any]:
     load_dotenv()
 
     project_id = os.getenv("PROJECT_ID")
-    dataset_id = os.getenv("DATASET_ID", "rag_demo")
+    dataset_id = os.getenv("DATASET_ID", "rag_demo_v2")
     table_id = os.getenv("TABLE_ID", "document_embeddings_v2")
     location = os.getenv("LOCATION", "us-central1")
     model_name = os.getenv("MODEL_NAME", "gemini-embedding-001")
