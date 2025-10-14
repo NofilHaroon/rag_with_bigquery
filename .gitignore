@@ -327,3 +327,4 @@ docker-compose.yaml
 
 pdf/
 output/
+.cursor/plans/
