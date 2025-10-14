@@ -95,7 +95,8 @@ def run_similarity_search(
 
     sql = f"""
     WITH params AS (
-      SELECT @query_vec AS qv
+      SELECT @query_vec AS qv,
+             SQRT((SELECT SUM(x * x) FROM UNNEST(@query_vec) x)) AS qv_norm
     ),
     scored AS (
       SELECT
@@ -108,18 +109,19 @@ def run_similarity_search(
         embedding,
         (
           SELECT SUM(qv * ev)
-          FROM UNNEST((SELECT qv FROM params)) qv WITH OFFSET o
+          FROM UNNEST(params.qv) qv WITH OFFSET o
           JOIN UNNEST(embedding) ev WITH OFFSET o USING (o)
         ) /
         (
-          SQRT((SELECT SUM(x * x) FROM UNNEST((SELECT qv FROM params)) x)) *
+          params.qv_norm *
           SQRT((SELECT SUM(y * y) FROM UNNEST(embedding) y))
         ) AS cosine
-      FROM `{table_fqn}`
-      WHERE (
-        ARRAY_LENGTH(@document_names) = 0
-        OR document_name IN UNNEST(@document_names)
-      )
+      FROM `{table_fqn}`, params
+      WHERE embedding IS NOT NULL AND ARRAY_LENGTH(embedding) > 0
+        AND (
+          ARRAY_LENGTH(@document_names) = 0
+          OR document_name IN UNNEST(@document_names)
+        )
     )
     SELECT *
     FROM scored
@@ -211,11 +213,9 @@ def main(query: str, top_k: int = 5, document_names: Optional[List[str]] = None,
 
 if __name__ == "__main__":
     # --- Configure run-time arguments here (no CLI flags needed) ---
-    QUERY: str = "What is the training plan for week 1?"  # Set your default query
+    QUERY: str = "Which workout has a pause at the bottom?"  # Set your default query
     TOP_K: int = 5  # Number of results to return
     DOCUMENT_NAMES: List[str] = []  # e.g., ["Triphasic Strength Speed.pdf", "hs-hypertrophy-12-10-8-6-.pdf"]
-    OUTPUT_FORMAT: str = "table"  # "table" or "json"
+    OUTPUT_FORMAT: str = "json"  # "table" or "json"
 
     main(query=QUERY, top_k=TOP_K, document_names=DOCUMENT_NAMES, output_format=OUTPUT_FORMAT)
-
-
