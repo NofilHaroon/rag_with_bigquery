@@ -84,6 +84,17 @@ def embed_query(embedding_model: TextEmbeddingModel, text: str) -> List[float]:
         raise SystemExit(1)
 
 
+
+# --- Helper function to ensure dataset exists ---
+def ensure_dataset_exists(bq_client: bigquery.Client, dataset_id: str, project_id: str):
+    dataset_ref = bigquery.Dataset(f"{project_id}.{dataset_id}")
+    try:
+        bq_client.get_dataset(dataset_ref)
+    except Exception:
+        # Dataset does not exist, so create it
+        bq_client.create_dataset(dataset_ref)
+
+
 def run_similarity_search(
     bq_client: bigquery.Client,
     project_id: str,
@@ -131,17 +142,25 @@ def run_similarity_search(
     LIMIT @top_k
     """
 
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ArrayQueryParameter("query_vec", "FLOAT64", query_vec),
-            bigquery.ScalarQueryParameter("top_k", "INT64", top_k),
-            bigquery.ArrayQueryParameter("document_names", "STRING", document_names or []),
-        ]
-    )
+    # Ensure dataset exists before running the query
+    ensure_dataset_exists(bq_client, dataset_id, project_id)
 
+    job_config = bigquery.QueryJobConfig(
+        query_parameters = [
+                bigquery.ArrayQueryParameter("query_vec", "FLOAT64", query_vec),
+                bigquery.ScalarQueryParameter("top_k", "INT64", top_k),
+                bigquery.ArrayQueryParameter("document_names", "STRING", document_names or []),
+            ],
+            destination=f"{project_id}.{dataset_id}.temp_similarity_results",  # ✅ permanent destination
+            write_disposition="WRITE_TRUNCATE",  # ✅ overwrite each run
+        )
+
+    # Only one query execution
     try:
         query_job = bq_client.query(sql, job_config=job_config)
-        rows = list(query_job.result())
+        query_job.result()  # Waits for completion
+        table_ref = f"{project_id}.{dataset_id}.temp_similarity_results"
+        rows = list(bq_client.list_rows(table_ref))
         results: List[Dict[str, Any]] = []
         for r in rows:
             results.append(
