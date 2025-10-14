@@ -42,7 +42,7 @@ PROJECT_ID = os.getenv("PROJECT_ID")
 DATASET_ID = os.getenv("DATASET_ID", "rag_demo")
 TABLE_ID = os.getenv("TABLE_ID", "document_embeddings")
 LOCATION = os.getenv("LOCATION", "us-central1")
-MODEL_NAME = os.getenv("MODEL_NAME", "textembedding-gecko@003")
+MODEL_NAME = os.getenv("MODEL_NAME", "text-embedding-004")
 PDF_PATH = os.getenv("PDF_PATH", "example.pdf")
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
