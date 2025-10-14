@@ -40,7 +40,7 @@ def load_config() -> Dict[str, Any]:
     dataset_id = os.getenv("DATASET_ID", "rag_demo")
     table_id = os.getenv("TABLE_ID", "document_embeddings")
     location = os.getenv("LOCATION", "us-central1")
-    model_name = os.getenv("MODEL_NAME", "textembedding-gecko@003")
+    model_name = os.getenv("MODEL_NAME", "text-embedding-004")
     creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
     if not project_id:
