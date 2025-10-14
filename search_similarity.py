@@ -5,6 +5,9 @@ CLI tool to perform top-k semantic similarity search over embeddings
 stored in BigQuery. The query is embedded using Vertex AI's
 TextEmbeddingModel and cosine similarity is computed in BigQuery.
 
+Results are automatically saved to CSV files in the 'output' directory
+with timestamps and query-based filenames for easy tracking.
+
 Environment configuration is read from `.env` (same variables as the
 ingestion pipeline): PROJECT_ID, DATASET_ID, TABLE_ID, LOCATION,
 MODEL_NAME, GOOGLE_APPLICATION_CREDENTIALS.
@@ -14,6 +17,8 @@ import os
 import sys
 import json
 import logging
+import csv
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -206,6 +211,59 @@ def run_similarity_search(
         raise
 
 
+def ensure_output_directory() -> str:
+    """Create output directory if it doesn't exist and return the path."""
+    output_dir = "output"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        logger.info(f"Created output directory: {output_dir}")
+    return output_dir
+
+
+def save_to_csv(items: List[Dict[str, Any]], query: str) -> str:
+    """Save search results to a CSV file and return the file path."""
+    if not items:
+        logger.warning("No results to save to CSV")
+        return ""
+    
+    output_dir = ensure_output_directory()
+    
+    # Create filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Clean query for filename (remove special characters)
+    clean_query = "".join(c for c in query if c.isalnum() or c in (' ', '-', '_')).rstrip()
+    clean_query = clean_query.replace(' ', '_')[:50]  # Limit length
+    filename = f"similarity_search_{clean_query}_{timestamp}.csv"
+    filepath = os.path.join(output_dir, filename)
+    
+    # Define CSV columns
+    fieldnames = ["rank", "cosine", "document_name", "page_number", "chunk_index", "chunk_text", "id", "document_id"]
+    
+    try:
+        with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for i, item in enumerate(items, 1):
+                row = {
+                    "rank": i,
+                    "cosine": item.get("cosine"),
+                    "document_name": item.get("document_name"),
+                    "page_number": item.get("page_number"),
+                    "chunk_index": item.get("chunk_index"),
+                    "chunk_text": item.get("chunk_text"),
+                    "id": item.get("id"),
+                    "document_id": item.get("document_id")
+                }
+                writer.writerow(row)
+        
+        logger.info(f"Results saved to CSV: {filepath}")
+        return filepath
+    except Exception as e:
+        logger.error(f"Failed to save CSV file: {e}")
+        raise
+
+
 def print_as_table(items: List[Dict[str, Any]], width: int = 100) -> None:
     if not items:
         print("No results.")
@@ -249,8 +307,16 @@ def main(query: str, top_k: int = 5, document_names: Optional[List[str]] = None,
             document_names=document_names or [],
         )
 
+        # Always save results to CSV
+        csv_filepath = save_to_csv(results, query)
+        if csv_filepath:
+            print(f"Results saved to: {csv_filepath}")
+
+        # Display results based on output format
         if output_format == "json":
             print(json.dumps(results, ensure_ascii=False, indent=2))
+        elif output_format == "csv":
+            print(f"Results saved to CSV: {csv_filepath}")
         else:
             print_as_table(results)
     except PermissionDenied as e:
@@ -285,6 +351,7 @@ if __name__ == "__main__":
     QUERY: str = "Which workout has a pause at the bottom?"  # Set your default query
     TOP_K: int = 10  # Number of results to return
     DOCUMENT_NAMES: List[str] = []  # e.g., ["Triphasic Strength Speed.pdf", "hs-hypertrophy-12-10-8-6-.pdf"]
-    OUTPUT_FORMAT: str = "json"  # "table" or "json"
+    # DOCUMENT_NAMES: List[str] = ["Triphasic Strength Speed.pdf"]
+    OUTPUT_FORMAT: str = "table"  # "table" or "json"
 
     main(query=QUERY, top_k=TOP_K, document_names=DOCUMENT_NAMES, output_format=OUTPUT_FORMAT)
