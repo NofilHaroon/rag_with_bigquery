@@ -6,7 +6,7 @@ A complete end-to-end pipeline for building a Retrieval-Augmented Generation (RA
 
 - **PDF Text Extraction**: Extracts text from PDF files page by page with proper metadata tracking
 - **Intelligent Chunking**: Splits text into overlapping chunks (300 words with 50-word overlap) for optimal embedding generation
-- **Vertex AI Integration**: Uses Google's `text-embedding-004` model for high-quality embeddings
+- **Vertex AI Integration**: Uses Google's `gemini-embedding-001` model for high-quality embeddings
 - **BigQuery Storage**: Stores embeddings with rich metadata (document ID, page numbers, chunk indices) for efficient querying
 - **Automatic Schema Management**: Creates BigQuery datasets and tables automatically if they don't exist
 - **Comprehensive Logging**: Detailed logging throughout the pipeline for monitoring and debugging
@@ -68,11 +68,11 @@ Create a `.env` file in the project root:
 # Google Cloud Configuration
 PROJECT_ID=your-gcp-project-id
 DATASET_ID=rag_demo
-TABLE_ID=document_embeddings
+TABLE_ID=document_embeddings_v2
 LOCATION=us-central1
 
 # Vertex AI Configuration
-MODEL_NAME=text-embedding-004
+MODEL_NAME=gemini-embedding-001
 
 # Document Processing
 PDF_PATH=path/to/your/document.pdf
@@ -150,13 +150,13 @@ rank	cosine	document_name	page	chunk	chunk_text
 ### Querying Embeddings in BigQuery
 ```sql
 -- Find all chunks from a specific document
-SELECT * FROM `your-project.rag_demo.document_embeddings`
+SELECT * FROM `your-project.rag_demo.document_embeddings_v2`
 WHERE document_name = 'your-document.pdf'
 ORDER BY page_number, chunk_index;
 
 -- Get chunks from a specific page
 SELECT chunk_text, embedding
-FROM `your-project.rag_demo.document_embeddings`
+FROM `your-project.rag_demo.document_embeddings_v2`
 WHERE document_name = 'your-document.pdf'
 AND page_number = 1;
 ```
@@ -183,13 +183,13 @@ rag_with_bigquery/
 - **Overlap**: 50 words (configurable in code)
 
 ### Embedding Model
-- **Default**: `text-embedding-004`
+- **Default**: `gemini-embedding-001`
 - **Dimensions**: 768
 - **Max Tokens**: 3,072
 
 ### BigQuery Settings
 - **Default Dataset**: `rag_demo`
-- **Default Table**: `document_embeddings`
+- **Default Table**: `document_embeddings_v2`
 - **Location**: `us-central1`
 
 ## 🚨 Important Notes
