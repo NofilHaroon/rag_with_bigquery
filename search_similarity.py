@@ -21,6 +21,8 @@ from google.cloud import bigquery
 from google.cloud import aiplatform
 from vertexai.language_models import TextEmbeddingModel
 from google.api_core.exceptions import GoogleAPIError
+from google.api_core.exceptions import ClientError
+from google.api_core.exceptions import PermissionDenied
 
 
 # === Logging Configuration ===
@@ -154,9 +156,27 @@ def run_similarity_search(
                 }
             )
         return results
+    except PermissionDenied as e:
+        # Explicit permission denied handling with detailed error payload
+        try:
+            errors = getattr(e, "errors", None)
+            error_str = json.dumps(errors, indent=2) if errors else str(e)
+        except Exception:
+            error_str = str(e)
+        logger.error("BigQuery PermissionDenied during similarity search: %s", error_str)
+        raise
+    except ClientError as e:
+        # Surface BigQuery permission/job errors with details
+        try:
+            errors = getattr(e, "errors", None)
+            error_str = json.dumps(errors, indent=2) if errors else str(e)
+        except Exception:
+            error_str = str(e)
+        logger.error("BigQuery ClientError during similarity search. Details: %s", error_str)
+        raise
     except GoogleAPIError as e:
         logger.exception("BigQuery similarity search failed: %s", e)
-        raise SystemExit(1)
+        raise
 
 
 def print_as_table(items: List[Dict[str, Any]], width: int = 100) -> None:
@@ -206,6 +226,28 @@ def main(query: str, top_k: int = 5, document_names: Optional[List[str]] = None,
             print(json.dumps(results, ensure_ascii=False, indent=2))
         else:
             print_as_table(results)
+    except PermissionDenied as e:
+        try:
+            errors = getattr(e, "errors", None)
+            error_str = json.dumps(errors, indent=2) if errors else str(e)
+        except Exception:
+            error_str = str(e)
+        logger.error("BigQuery PermissionDenied in main: %s", error_str)
+        print(error_str, file=sys.stderr)
+        raise SystemExit(1)
+    except ClientError as e:
+        try:
+            errors = getattr(e, "errors", None)
+            error_str = json.dumps(errors, indent=2) if errors else str(e)
+        except Exception:
+            error_str = str(e)
+        logger.error("BigQuery ClientError in main: %s", error_str)
+        print(error_str, file=sys.stderr)
+        raise SystemExit(1)
+    except GoogleAPIError as e:
+        logger.exception("Google API error: %s", e)
+        print(str(e), file=sys.stderr)
+        raise SystemExit(1)
     except KeyboardInterrupt:
         print("Interrupted", file=sys.stderr)
         raise SystemExit(130)
