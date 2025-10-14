@@ -326,3 +326,4 @@ docker-compose.yaml
 *.kubeconfig
 
 pdf/
+output/
