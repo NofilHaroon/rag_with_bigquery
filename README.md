@@ -112,6 +112,30 @@ PDF_PATH=/path/to/your/document.pdf
 python rag_with_bigquery_pdf_metadata.py
 ```
 
+### Similarity Search (CLI)
+
+After ingesting documents, run semantic search over embeddings stored in BigQuery.
+
+```bash
+# Basic search (table output)
+python search_similarity.py --query "What is the program focus?" --top_k 5
+
+# Filter by a specific document
+python search_similarity.py --query "workout split" --document_name hs-hypertrophy-12-10-8-6-.pdf --top_k 5
+
+# JSON output
+python search_similarity.py --query "deload week" --top_k 3 --format json
+```
+
+Sample table output:
+
+```
+rank	cosine	document_name	page	chunk	chunk_text
+1	0.8123	hs-hypertrophy-12-10-8-6-.pdf	2	0	Hypertrophy phase focuses on...
+2	0.7981	hs-hypertrophy-12-10-8-6-.pdf	3	1	Volume is progressively increased...
+3	0.7734	Triphasic Strength Speed.pdf	5	0	Strength speed emphasis includes...
+```
+
 ### Querying Embeddings in BigQuery
 ```sql
 -- Find all chunks from a specific document

@@ -25,6 +25,8 @@ from google.cloud import bigquery
 from google.cloud import aiplatform
 from vertexai.language_models import TextEmbeddingModel
 from google.api_core.exceptions import GoogleAPIError
+from google.api_core.exceptions import ClientError
+from google.api_core.exceptions import PermissionDenied
 
 # === Logging Configuration ===
 logging.basicConfig(
@@ -42,7 +44,7 @@ PROJECT_ID = os.getenv("PROJECT_ID")
 DATASET_ID = os.getenv("DATASET_ID", "rag_demo")
 TABLE_ID = os.getenv("TABLE_ID", "document_embeddings")
 LOCATION = os.getenv("LOCATION", "us-central1")
-MODEL_NAME = os.getenv("MODEL_NAME", "textembedding-gecko@003")
+MODEL_NAME = os.getenv("MODEL_NAME", "text-embedding-004")
 PDF_PATH = os.getenv("PDF_PATH", "example.pdf")
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
@@ -139,6 +141,12 @@ def create_bq_table():
     try:
         bq_client.get_dataset(dataset_ref)
         logger.info(f"Dataset `{DATASET_ID}` already exists.")
+    except PermissionDenied as e:
+        logger.error("PermissionDenied getting dataset: %s", getattr(e, "errors", str(e)))
+        raise
+    except ClientError as e:
+        logger.error("ClientError getting dataset: %s", getattr(e, "errors", str(e)))
+        raise
     except Exception:
         bq_client.create_dataset(bigquery.Dataset(dataset_ref))
         logger.info(f"✅ Created dataset `{DATASET_ID}`.")
@@ -146,6 +154,12 @@ def create_bq_table():
     try:
         bq_client.get_table(table_ref)
         logger.info("Table already exists.")
+    except PermissionDenied as e:
+        logger.error("PermissionDenied getting table: %s", getattr(e, "errors", str(e)))
+        raise
+    except ClientError as e:
+        logger.error("ClientError getting table: %s", getattr(e, "errors", str(e)))
+        raise
     except Exception:
         table = bigquery.Table(table_ref, schema=schema)
         bq_client.create_table(table)
@@ -162,6 +176,12 @@ def get_existing_document_names() -> set:
     try:
         # Ensure table exists or NotFound is thrown
         bq_client.get_table(table_ref)
+    except PermissionDenied as e:
+        logger.error("PermissionDenied checking table existence: %s", getattr(e, "errors", str(e)))
+        return set()
+    except ClientError as e:
+        logger.error("ClientError checking table existence: %s", getattr(e, "errors", str(e)))
+        return set()
     except Exception:
         return set()
 
@@ -179,6 +199,12 @@ def get_existing_document_names() -> set:
                 names.add(name)
         logger.info(f"🗂️ Found {len(names)} existing document names in BigQuery.")
         return names
+    except PermissionDenied as e:
+        logger.error("PermissionDenied listing rows: %s", getattr(e, "errors", str(e)))
+        return set()
+    except ClientError as e:
+        logger.error("ClientError listing rows: %s", getattr(e, "errors", str(e)))
+        return set()
     except GoogleAPIError as e:
         logger.exception("Failed to fetch existing document names via list_rows: %s", e)
         return set()
@@ -198,6 +224,10 @@ def insert_embeddings(rows: List[Dict]):
             logger.error("❌ Errors inserting rows: %s", errors)
         else:
             logger.info(f"✅ Inserted {len(rows)} rows into {table_ref}")
+    except PermissionDenied as e:
+        logger.error("BigQuery PermissionDenied on insert: %s", getattr(e, "errors", str(e)))
+    except ClientError as e:
+        logger.error("BigQuery ClientError on insert: %s", getattr(e, "errors", str(e)))
     except GoogleAPIError as e:
         logger.exception("BigQuery insert failed: %s", e)
     except Exception as e:
