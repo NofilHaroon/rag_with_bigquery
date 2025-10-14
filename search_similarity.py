@@ -14,7 +14,6 @@ import os
 import sys
 import json
 import logging
-import argparse
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -90,7 +89,7 @@ def run_similarity_search(
     table_id: str,
     query_vec: List[float],
     top_k: int,
-    document_name: Optional[str],
+    document_names: Optional[List[str]],
 ) -> List[Dict[str, Any]]:
     table_fqn = f"{project_id}.{dataset_id}.{table_id}"
 
@@ -117,7 +116,10 @@ def run_similarity_search(
           SQRT((SELECT SUM(y * y) FROM UNNEST(embedding) y))
         ) AS cosine
       FROM `{table_fqn}`
-      WHERE (@document_name IS NULL OR document_name = @document_name)
+      WHERE (
+        ARRAY_LENGTH(@document_names) = 0
+        OR document_name IN UNNEST(@document_names)
+      )
     )
     SELECT *
     FROM scored
@@ -129,7 +131,7 @@ def run_similarity_search(
         query_parameters=[
             bigquery.ArrayQueryParameter("query_vec", "FLOAT64", query_vec),
             bigquery.ScalarQueryParameter("top_k", "INT64", top_k),
-            bigquery.ScalarQueryParameter("document_name", "STRING", document_name),
+            bigquery.ArrayQueryParameter("document_names", "STRING", document_names or []),
         ]
     )
 
@@ -181,42 +183,24 @@ def print_as_table(items: List[Dict[str, Any]], width: int = 100) -> None:
         print("\t".join(row))
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Similarity search over BigQuery embeddings")
-    parser.add_argument("--query", required=True, help="Query text to search with")
-    parser.add_argument("--top_k", type=int, default=5, help="Number of results to return")
-    parser.add_argument(
-        "--document_name",
-        type=str,
-        default=None,
-        help="Optional filter to restrict search to a specific document name",
-    )
-    parser.add_argument(
-        "--format",
-        choices=["json", "table"],
-        default="table",
-        help="Output format",
-    )
-
-    args = parser.parse_args()
-
+def main(query: str, top_k: int = 5, document_names: Optional[List[str]] = None, output_format: str = "table") -> None:
     try:
         config = load_config()
         embedding_model, bq_client = initialize_clients(
             config["PROJECT_ID"], config["LOCATION"], config["MODEL_NAME"]
         )
-        qvec = embed_query(embedding_model, args.query)
+        qvec = embed_query(embedding_model, query)
         results = run_similarity_search(
             bq_client=bq_client,
             project_id=config["PROJECT_ID"],
             dataset_id=config["DATASET_ID"],
             table_id=config["TABLE_ID"],
             query_vec=qvec,
-            top_k=args.top_k,
-            document_name=args.document_name,
+            top_k=top_k,
+            document_names=document_names or [],
         )
 
-        if args.format == "json":
+        if output_format == "json":
             print(json.dumps(results, ensure_ascii=False, indent=2))
         else:
             print_as_table(results)
@@ -226,6 +210,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # --- Configure run-time arguments here (no CLI flags needed) ---
+    QUERY: str = "What is the training plan for week 1?"  # Set your default query
+    TOP_K: int = 5  # Number of results to return
+    DOCUMENT_NAMES: List[str] = []  # e.g., ["Triphasic Strength Speed.pdf", "hs-hypertrophy-12-10-8-6-.pdf"]
+    OUTPUT_FORMAT: str = "table"  # "table" or "json"
+
+    main(query=QUERY, top_k=TOP_K, document_names=DOCUMENT_NAMES, output_format=OUTPUT_FORMAT)
 
 
