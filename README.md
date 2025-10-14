@@ -6,7 +6,7 @@ A complete end-to-end pipeline for building a Retrieval-Augmented Generation (RA
 
 - **PDF Text Extraction**: Extracts text from PDF files page by page with proper metadata tracking
 - **Intelligent Chunking**: Splits text into overlapping chunks (300 words with 50-word overlap) for optimal embedding generation
-- **Vertex AI Integration**: Uses Google's `textembedding-gecko@003` model for high-quality embeddings
+- **Vertex AI Integration**: Uses Google's `text-embedding-004` model for high-quality embeddings
 - **BigQuery Storage**: Stores embeddings with rich metadata (document ID, page numbers, chunk indices) for efficient querying
 - **Automatic Schema Management**: Creates BigQuery datasets and tables automatically if they don't exist
 - **Comprehensive Logging**: Detailed logging throughout the pipeline for monitoring and debugging
@@ -72,7 +72,7 @@ TABLE_ID=document_embeddings
 LOCATION=us-central1
 
 # Vertex AI Configuration
-MODEL_NAME=textembedding-gecko@003
+MODEL_NAME=text-embedding-004
 
 # Document Processing
 PDF_PATH=path/to/your/document.pdf
@@ -112,20 +112,31 @@ PDF_PATH=/path/to/your/document.pdf
 python rag_with_bigquery_pdf_metadata.py
 ```
 
-### Similarity Search (CLI)
+### Similarity Search (Script)
 
 After ingesting documents, run semantic search over embeddings stored in BigQuery.
 
+- **Configure the query** by editing the constants at the bottom of `search_similarity.py` (`QUERY`, `TOP_K`, `DOCUMENT_NAMES`, `OUTPUT_FORMAT`).
+- **Run the script**:
+
 ```bash
-# Basic search (table output)
-python search_similarity.py --query "What is the program focus?" --top_k 5
-
-# Filter by a specific document
-python search_similarity.py --query "workout split" --document_name hs-hypertrophy-12-10-8-6-.pdf --top_k 5
-
-# JSON output
-python search_similarity.py --query "deload week" --top_k 3 --format json
+python search_similarity.py
 ```
+
+Configurable section in the script:
+
+```349:356:/Users/nofil/Work/rag_with_bigquery/search_similarity.py
+if __name__ == "__main__":
+    # --- Configure run-time arguments here (no CLI flags needed) ---
+    QUERY: str = "Which workout has a pause at the bottom?"  # Set your default query
+    TOP_K: int = 10  # Number of results to return
+    DOCUMENT_NAMES: List[str] = []  # e.g., ["Triphasic Strength Speed.pdf", "hs-hypertrophy-12-10-8-6-.pdf"]
+    # DOCUMENT_NAMES: List[str] = ["Triphasic Strength Speed.pdf"]
+    OUTPUT_FORMAT: str = "table"  # "table" or "json"
+```
+
+- **Filtering**: Add one or more PDF filenames to `DOCUMENT_NAMES` to restrict results.
+- **Outputs**: Results are always saved as a timestamped CSV in the `output/` directory, and displayed as a table or JSON based on `OUTPUT_FORMAT`.
 
 Sample table output:
 
@@ -155,6 +166,7 @@ AND page_number = 1;
 ```
 rag_with_bigquery/
 ├── rag_with_bigquery_pdf_metadata.py  # Main pipeline script
+├── search_similarity.py               # Similarity search over embeddings
 ├── requirements.txt                    # Python dependencies
 ├── .env                               # Environment configuration (create this)
 ├── .gitignore                         # Git ignore rules
@@ -171,7 +183,7 @@ rag_with_bigquery/
 - **Overlap**: 50 words (configurable in code)
 
 ### Embedding Model
-- **Default**: `textembedding-gecko@003`
+- **Default**: `text-embedding-004`
 - **Dimensions**: 768
 - **Max Tokens**: 3,072
 
