@@ -106,10 +106,23 @@ def run_similarity_search(
 ) -> List[Dict[str, Any]]:
     table_fqn = f"{project_id}.{dataset_id}.{table_id}"
 
+    # Inline the query vector as a BigQuery array literal
+    query_vec_literal = "[" + ",".join(f"{v:.15f}" for v in query_vec) + "]"
+
+    # Inline the document_names as a BigQuery array literal of strings
+    if document_names:
+        doc_names_escaped = [f"'{name.replace('\'', '\\\'')}'" for name in document_names]
+        document_names_literal = "[" + ",".join(doc_names_escaped) + "]"
+    else:
+        document_names_literal = "[]"
+
+    # Log that we are building a fully inlined SQL query
+    logger.info("Building fully inlined SQL query with embedded query vector and document names.")
+
     sql = f"""
     WITH params AS (
-      SELECT @query_vec AS qv,
-             SQRT((SELECT SUM(x * x) FROM UNNEST(@query_vec) x)) AS qv_norm
+      SELECT {query_vec_literal} AS qv,
+             SQRT((SELECT SUM(x * x) FROM UNNEST({query_vec_literal}) x)) AS qv_norm
     ),
     scored AS (
       SELECT
@@ -132,35 +145,30 @@ def run_similarity_search(
       FROM `{table_fqn}`, params
       WHERE embedding IS NOT NULL AND ARRAY_LENGTH(embedding) > 0
         AND (
-          ARRAY_LENGTH(@document_names) = 0
-          OR document_name IN UNNEST(@document_names)
+          ARRAY_LENGTH({document_names_literal}) = 0
+          OR document_name IN UNNEST({document_names_literal})
         )
     )
     SELECT *
     FROM scored
     ORDER BY cosine DESC
-    LIMIT @top_k
+    LIMIT {top_k}
     """
 
     # Ensure dataset exists before running the query
     ensure_dataset_exists(bq_client, dataset_id, project_id)
 
-    job_config = bigquery.QueryJobConfig(
-        query_parameters = [
-                bigquery.ArrayQueryParameter("query_vec", "FLOAT64", query_vec),
-                bigquery.ScalarQueryParameter("top_k", "INT64", top_k),
-                bigquery.ArrayQueryParameter("document_names", "STRING", document_names or []),
-            ],
-            destination=f"{project_id}.{dataset_id}.temp_similarity_results",  # ✅ permanent destination
-            write_disposition="WRITE_TRUNCATE",  # ✅ overwrite each run
-        )
+    # Use a permanent destination table for the results
+    destination_table = f"{project_id}.{dataset_id}.temp_similarity_results"
 
-    # Only one query execution
+    job_config = bigquery.QueryJobConfig(
+        destination=destination_table,
+        write_disposition="WRITE_TRUNCATE",
+    )
     try:
         query_job = bq_client.query(sql, job_config=job_config)
         query_job.result()  # Waits for completion
-        table_ref = f"{project_id}.{dataset_id}.temp_similarity_results"
-        rows = list(bq_client.list_rows(table_ref))
+        rows = list(bq_client.list_rows(destination_table))
         results: List[Dict[str, Any]] = []
         for r in rows:
             results.append(
@@ -275,7 +283,7 @@ def main(query: str, top_k: int = 5, document_names: Optional[List[str]] = None,
 if __name__ == "__main__":
     # --- Configure run-time arguments here (no CLI flags needed) ---
     QUERY: str = "Which workout has a pause at the bottom?"  # Set your default query
-    TOP_K: int = 5  # Number of results to return
+    TOP_K: int = 10  # Number of results to return
     DOCUMENT_NAMES: List[str] = []  # e.g., ["Triphasic Strength Speed.pdf", "hs-hypertrophy-12-10-8-6-.pdf"]
     OUTPUT_FORMAT: str = "json"  # "table" or "json"
 
