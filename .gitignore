@@ -328,3 +328,4 @@ docker-compose.yaml
 pdf/
 output/
 .cursor/plans/
+workout_plan_exports/

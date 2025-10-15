@@ -14,11 +14,16 @@ Prerequisites:
     Create .env (see README or example below)
 """
 
+# === IMPORTS ===
+# Standard library imports
 import os
+import json
 import uuid
 import logging
 import glob
 from typing import List, Dict
+
+# Third-party imports
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
 from google.cloud import bigquery
@@ -28,7 +33,8 @@ from google.api_core.exceptions import GoogleAPIError
 from google.api_core.exceptions import ClientError
 from google.api_core.exceptions import PermissionDenied
 
-# === Logging Configuration ===
+# === CONFIGURATION AND INITIALIZATION ===
+# Logging Configuration
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(message)s",
@@ -36,8 +42,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-# === Load environment variables ===
+# Load environment variables
 load_dotenv()
 
 PROJECT_ID = os.getenv("PROJECT_ID")
@@ -58,8 +63,7 @@ if not GOOGLE_APPLICATION_CREDENTIALS or not os.path.exists(GOOGLE_APPLICATION_C
 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_APPLICATION_CREDENTIALS
 
-
-# === Initialize Clients ===
+# Initialize Clients
 try:
     aiplatform.init(project=PROJECT_ID, location=LOCATION)
     embedding_model = TextEmbeddingModel.from_pretrained(MODEL_NAME)
@@ -70,7 +74,8 @@ except GoogleAPIError as e:
     raise SystemExit(1)
 
 
-# === PDF File Discovery ===
+# === UTILITY FUNCTIONS ===
+# PDF File Discovery
 def get_pdf_files(pdf_directory: str) -> List[str]:
     """Get all PDF files from the specified directory."""
     pdf_pattern = os.path.join(pdf_directory, "*.pdf")
@@ -78,8 +83,7 @@ def get_pdf_files(pdf_directory: str) -> List[str]:
     logger.info(f"📁 Found {len(pdf_files)} PDF files in {pdf_directory}")
     return pdf_files
 
-
-# === PDF Text Extraction ===
+# PDF Text Extraction
 def extract_text_by_page(pdf_path: str) -> List[str]:
     """Extract text per page from a PDF file."""
     try:
@@ -94,8 +98,7 @@ def extract_text_by_page(pdf_path: str) -> List[str]:
         logger.exception("Error reading PDF file: %s", e)
         raise
 
-
-# === Document Chunking ===
+# Document Chunking
 def chunk_text(text: str, chunk_size: int = 300, overlap: int = 50) -> List[str]:
     """Split a text into overlapping chunks."""
     words = text.split()
@@ -106,8 +109,28 @@ def chunk_text(text: str, chunk_size: int = 300, overlap: int = 50) -> List[str]
     logger.debug(f"Created {len(chunks)} chunks from text segment ({len(words)} words).")
     return chunks
 
+# JSON Chunking Helper
+def chunk_json_text(json_data: Dict, chunk_size: int = 3000, chunk_overlap: int = 100) -> List[Dict]:
+    """
+    Flatten a JSON object to a string, then split into overlapping character chunks.
+    Returns a list of dicts: [{"chunk_index": int, "chunk_text": str}]
+    """
+    # Flatten the JSON data to a pretty-printed string for embedding
+    json_text = json.dumps(json_data, indent=2, ensure_ascii=False)
+    chunks = []
+    start = 0
+    chunk_index = 0
+    while start < len(json_text):
+        end = min(start + chunk_size, len(json_text))
+        chunk = json_text[start:end]
+        chunks.append({"chunk_index": chunk_index, "chunk_text": chunk})
+        if end == len(json_text):
+            break
+        start = end - chunk_overlap  # overlap for next chunk
+        chunk_index += 1
+    return chunks
 
-# === Embedding Generation ===
+# === EMBEDDING FUNCTIONS ===
 def generate_embeddings(chunks: List[str]) -> List[List[float]]:
     """Generate embeddings for a list of text chunks using Vertex AI."""
     embeddings = []
@@ -122,7 +145,8 @@ def generate_embeddings(chunks: List[str]) -> List[List[float]]:
     return embeddings
 
 
-# === BigQuery Table Setup ===
+# === BIGQUERY OPERATIONS ===
+# Table Setup
 def create_bq_table():
     """Create a BigQuery table to store embeddings if it doesn't exist."""
     table_ref = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
@@ -177,8 +201,7 @@ def create_bq_table():
         logger.error("Unexpected error getting table: %s", e)
         raise
 
-
-# === BigQuery Helpers ===
+# Helper Functions
 def get_existing_document_names() -> set:
     """Return a set of distinct document names already present in the table.
 
@@ -220,8 +243,7 @@ def get_existing_document_names() -> set:
         logger.exception("Failed to fetch existing document names via list_rows: %s", e)
         return set()
 
-
-# === BigQuery Delete ===
+# Delete Operations
 def delete_document_by_name(document_name: str) -> int:
     """Delete all rows from the embeddings table for a given document name.
 
@@ -291,8 +313,7 @@ def delete_document_by_name(document_name: str) -> int:
         logger.exception("BigQuery table rewrite failed for %s: %s", document_name, e)
         raise
 
-
-# === BigQuery Insert ===
+# Insert Operations
 def insert_embeddings(rows: List[Dict]):
     """Insert embeddings and metadata into BigQuery."""
     table_ref = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
@@ -316,7 +337,8 @@ def insert_embeddings(rows: List[Dict]):
         logger.exception("Unexpected error inserting rows: %s", e)
 
 
-# === Process Single Document ===
+# === DOCUMENT PROCESSING FUNCTIONS ===
+# PDF Document Processing
 def process_single_document(pdf_path: str, document_name: str | None = None) -> int:
     """Process a single PDF document and return the number of chunks inserted.
 
@@ -370,8 +392,75 @@ def process_single_document(pdf_path: str, document_name: str | None = None) -> 
     )
     return len(all_rows)
 
+# JSON Document Processing
+def process_json_document(json_path: str, document_name: str | None = None) -> int:
+    """
+    Process a single JSON document:
+    - Read and parse JSON
+    - Chunk and flatten JSON text
+    - Generate embeddings
+    - Insert into BigQuery
+    Returns the number of chunks inserted.
+    """
 
-# === Add New PDFs (Idempotent) ===
+    logger.info(f"📄 Starting JSON document processing: {document_name or os.path.basename(json_path)}")
+
+    if not os.path.exists(json_path):
+        logger.error("❌ JSON file not found at path: %s", json_path)
+        raise FileNotFoundError(f"JSON file not found: {json_path}")
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            json_data = json.load(f)
+        logger.info(f"📄 Loaded JSON document: {json_path}")
+    except Exception as e:
+        logger.exception("Failed to read/parse JSON: %s", e)
+        raise
+
+    # Extract document_id and document_name from the JSON content if available
+    if (
+        "workout_plan" in json_data
+        and isinstance(json_data["workout_plan"], list)
+        and len(json_data["workout_plan"]) > 0
+    ):
+        first_plan = json_data["workout_plan"][0]
+        document_id = str(first_plan.get("id", str(uuid.uuid4())))
+        document_name = first_plan.get("name", document_name or os.path.basename(json_path))
+    else:
+        logger.warning("⚠️ 'workout_plan' key not found or empty — using defaults.")
+        document_id = str(uuid.uuid4())
+        document_name = document_name or os.path.basename(json_path)
+
+    logger.info("✂️ Chunking JSON text...")
+    chunk_dicts = chunk_json_text(json_data, chunk_size=3000, chunk_overlap=100)
+    chunks = [d["chunk_text"] for d in chunk_dicts]
+    logger.info(f"📦 Created {len(chunks)} JSON chunks.")
+
+    logger.info("🧠 Generating embeddings for JSON chunks...")
+    embeddings = generate_embeddings(chunks)
+
+    all_rows = []
+    for i, (chunk_text, embedding) in enumerate(zip(chunks, embeddings)):
+        row = {
+            "id": str(uuid.uuid4()),
+            "document_id": document_id,
+            "document_name": document_name,
+            "page_number": None,
+            "chunk_index": i,
+            "chunk_text": chunk_text,
+            "embedding": embedding,
+        }
+        all_rows.append(row)
+
+    insert_embeddings(all_rows)
+    logger.info(
+        "✅ Completed JSON processing for %s — %d chunks inserted into BigQuery.",
+        document_name,
+        len(all_rows),
+    )
+    return len(all_rows)
+
+# Batch Processing
 def add_new_pdfs(pdf_directory: str) -> None:
     """Process and insert only PDFs that are not yet in the BigQuery table.
 
@@ -424,8 +513,7 @@ def add_new_pdfs(pdf_directory: str) -> None:
     logger.info(f"📝 Total chunks inserted: {total_chunks}")
     logger.info("=" * 60)
 
-
-# === Main Process ===
+# === MAIN EXECUTION ===
 def main():
     pdf_directory = os.getenv("PDF_PATH", "pdf")
     # get_existing_document_names()
