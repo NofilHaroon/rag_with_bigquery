@@ -214,6 +214,12 @@ async def upload_page(request: Request):
     return templates.TemplateResponse("upload.html", {"request": request})
 
 
+@app.get("/documents")
+async def documents_page(request: Request):
+    """Render the documents management page."""
+    return templates.TemplateResponse("documents.html", {"request": request})
+
+
 # Search endpoints
 @app.post("/api/v1/search", response_model=SearchResponse)
 async def search_documents(

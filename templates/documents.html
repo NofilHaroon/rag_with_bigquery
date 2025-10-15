@@ -1,0 +1,353 @@
+{% extends "base.html" %}
+
+{% block title %}Documents - RAG with BigQuery{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h2 class="text-3xl font-bold text-gray-900 mb-2">Document Management</h2>
+        <p class="text-gray-600">View and manage your uploaded documents</p>
+    </div>
+
+    <!-- API Key Configuration -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <label for="apiKey" class="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+        <input 
+            type="password" 
+            id="apiKey" 
+            placeholder="Enter your API key" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        >
+        <p class="mt-2 text-sm text-gray-600">Your API key is stored locally in your browser and never sent to any server except your API.</p>
+    </div>
+
+    <!-- Documents List -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <div class="flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-900">Uploaded Documents</h3>
+                <button 
+                    id="refreshButton"
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                >
+                    Refresh
+                </button>
+            </div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loadingState" class="p-8">
+            <div class="flex items-center justify-center space-x-3">
+                <div class="spinner"></div>
+                <span class="text-gray-600">Loading documents...</span>
+            </div>
+        </div>
+
+        <!-- Error Message -->
+        <div id="errorMessage" class="hidden p-6">
+            <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div class="flex items-start">
+                    <svg class="h-5 w-5 text-red-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                    </svg>
+                    <div class="ml-3">
+                        <p class="text-red-800 font-medium">Error</p>
+                        <p id="errorText" class="text-red-700 text-sm mt-1"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Success Message -->
+        <div id="successMessage" class="hidden p-6">
+            <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div class="flex items-start">
+                    <svg class="h-5 w-5 text-green-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                    <div class="ml-3">
+                        <p class="text-green-800 font-medium">Success</p>
+                        <p id="successText" class="text-green-700 text-sm mt-1"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Documents List -->
+        <div id="documentsList" class="hidden">
+            <div id="documentsContainer" class="divide-y divide-gray-200">
+                <!-- Documents will be dynamically added here -->
+            </div>
+            
+            <!-- Empty State -->
+            <div id="emptyState" class="hidden p-8 text-center">
+                <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <h3 class="mt-2 text-sm font-medium text-gray-900">No documents</h3>
+                <p class="mt-1 text-sm text-gray-500">Get started by uploading a PDF document.</p>
+                <div class="mt-6">
+                    <a href="/upload" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                        <svg class="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                        Upload Document
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3 text-center">
+                <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+                    <svg class="h-6 w-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                </div>
+                <h3 class="text-lg font-medium text-gray-900 mt-4">Delete Document</h3>
+                <div class="mt-2 px-7 py-3">
+                    <p class="text-sm text-gray-500">
+                        Are you sure you want to delete <span id="deleteDocumentName" class="font-medium text-gray-900"></span>? 
+                        This action cannot be undone and will remove all associated chunks from the database.
+                    </p>
+                </div>
+                <div class="items-center px-4 py-3">
+                    <button 
+                        id="confirmDeleteButton"
+                        class="px-4 py-2 bg-red-600 text-white text-base font-medium rounded-md w-24 mr-2 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    >
+                        Delete
+                    </button>
+                    <button 
+                        id="cancelDeleteButton"
+                        class="px-4 py-2 bg-gray-300 text-gray-800 text-base font-medium rounded-md w-24 hover:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let documents = [];
+    let documentToDelete = null;
+
+    // Load API key from localStorage
+    document.addEventListener('DOMContentLoaded', () => {
+        const savedKey = localStorage.getItem('apiKey');
+        if (savedKey) {
+            document.getElementById('apiKey').value = savedKey;
+            // Load documents immediately if API key is available
+            loadDocuments();
+        }
+    });
+
+    // Save API key to localStorage when changed
+    document.getElementById('apiKey').addEventListener('change', (e) => {
+        localStorage.setItem('apiKey', e.target.value);
+        // Load documents when API key is entered/changed
+        loadDocuments();
+    });
+
+    // Refresh button
+    document.getElementById('refreshButton').addEventListener('click', () => {
+        loadDocuments();
+    });
+
+    // Load documents from API
+    async function loadDocuments() {
+        const apiKey = document.getElementById('apiKey').value;
+        if (!apiKey) {
+            showError('Please enter your API key');
+            return;
+        }
+
+        // Show loading state
+        document.getElementById('loadingState').classList.remove('hidden');
+        document.getElementById('documentsList').classList.add('hidden');
+        document.getElementById('errorMessage').classList.add('hidden');
+        document.getElementById('successMessage').classList.add('hidden');
+
+        try {
+            const response = await fetch('/api/v1/documents', {
+                headers: {
+                    'X-API-Key': apiKey
+                }
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to load documents');
+            }
+
+            const data = await response.json();
+            documents = data.documents;
+            displayDocuments();
+
+        } catch (error) {
+            showError(error.message);
+        } finally {
+            document.getElementById('loadingState').classList.add('hidden');
+        }
+    }
+
+    // Display documents
+    function displayDocuments() {
+        const container = document.getElementById('documentsContainer');
+        const documentsList = document.getElementById('documentsList');
+        const emptyState = document.getElementById('emptyState');
+
+        container.innerHTML = '';
+
+        if (documents.length === 0) {
+            documentsList.classList.remove('hidden');
+            emptyState.classList.remove('hidden');
+            return;
+        }
+
+        emptyState.classList.add('hidden');
+        documentsList.classList.remove('hidden');
+
+        documents.forEach((docName, index) => {
+            const docElement = document.createElement('div');
+            docElement.className = 'p-6 hover:bg-gray-50 transition-colors';
+            
+            docElement.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <div class="flex-shrink-0">
+                            <svg class="h-8 w-8 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-900">${escapeHtml(docName)}</h4>
+                            <p class="text-sm text-gray-500">PDF Document</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <span class="text-sm text-gray-500">Available for search</span>
+                        <button 
+                            class="px-3 py-1 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors delete-btn"
+                            data-document="${escapeHtml(docName)}"
+                        >
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            container.appendChild(docElement);
+        });
+
+        // Add event listeners to delete buttons
+        container.querySelectorAll('.delete-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const docName = e.target.getAttribute('data-document');
+                showDeleteModal(docName);
+            });
+        });
+    }
+
+    // Show delete confirmation modal
+    function showDeleteModal(docName) {
+        documentToDelete = docName;
+        document.getElementById('deleteDocumentName').textContent = docName;
+        document.getElementById('deleteModal').classList.remove('hidden');
+    }
+
+    // Hide delete confirmation modal
+    function hideDeleteModal() {
+        document.getElementById('deleteModal').classList.add('hidden');
+        documentToDelete = null;
+    }
+
+    // Cancel delete
+    document.getElementById('cancelDeleteButton').addEventListener('click', hideDeleteModal);
+
+    // Confirm delete
+    document.getElementById('confirmDeleteButton').addEventListener('click', async () => {
+        if (!documentToDelete) return;
+
+        const apiKey = document.getElementById('apiKey').value;
+        if (!apiKey) {
+            showError('API key is required');
+            return;
+        }
+
+        // Show loading state on button
+        const button = document.getElementById('confirmDeleteButton');
+        const originalText = button.textContent;
+        button.textContent = 'Deleting...';
+        button.disabled = true;
+
+        try {
+            const response = await fetch(`/api/v1/documents/${encodeURIComponent(documentToDelete)}`, {
+                method: 'DELETE',
+                headers: {
+                    'X-API-Key': apiKey
+                }
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to delete document');
+            }
+
+            const data = await response.json();
+            showSuccess(data.message);
+            hideDeleteModal();
+            
+            // Reload documents list
+            await loadDocuments();
+
+        } catch (error) {
+            showError(error.message);
+        } finally {
+            button.textContent = originalText;
+            button.disabled = false;
+        }
+    });
+
+    // Close modal when clicking outside
+    document.getElementById('deleteModal').addEventListener('click', (e) => {
+        if (e.target.id === 'deleteModal') {
+            hideDeleteModal();
+        }
+    });
+
+    // Show success message
+    function showSuccess(message) {
+        document.getElementById('successText').textContent = message;
+        document.getElementById('successMessage').classList.remove('hidden');
+        document.getElementById('errorMessage').classList.add('hidden');
+        
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+            document.getElementById('successMessage').classList.add('hidden');
+        }, 5000);
+    }
+
+    // Show error message
+    function showError(message) {
+        document.getElementById('errorText').textContent = message;
+        document.getElementById('errorMessage').classList.remove('hidden');
+        document.getElementById('successMessage').classList.add('hidden');
+    }
+
+    // Escape HTML to prevent XSS
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+</script>
+{% endblock %}
