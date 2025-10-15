@@ -4,3 +4,6 @@ PyPDF2
 python-dotenv
 google-cloud-storage
 ipykernel
+fastapi[standard]
+uvicorn[standard]
+python-multipart

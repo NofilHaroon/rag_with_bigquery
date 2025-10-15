@@ -165,15 +165,24 @@ AND page_number = 1;
 
 ```
 rag_with_bigquery/
+├── api.py                           # FastAPI application with REST endpoints
+├── auth.py                          # API key authentication
+├── models.py                        # Pydantic request/response models
+├── utils.py                         # Shared utilities and client initialization
 ├── rag_with_bigquery_pdf_metadata.py  # Main pipeline script
-├── search_similarity.py               # Similarity search over embeddings
-├── requirements.txt                    # Python dependencies
-├── .env                               # Environment configuration (create this)
-├── .gitignore                         # Git ignore rules
-├── keys/                              # Service account keys (gitignored)
-│   └── service_account.json          # Your GCP credentials
-├── Lorem_ipsum.pdf                    # Example PDF document
-└── README.md                          # This file
+├── search_similarity.py             # Similarity search over embeddings
+├── requirements.txt                  # Python dependencies
+├── .env                             # Environment configuration (create this)
+├── .env.example                     # Environment configuration template
+├── .gitignore                       # Git ignore rules
+├── keys/                            # Service account keys (gitignored)
+│   └── service_account.json        # Your GCP credentials
+├── pdf/                             # PDF documents directory
+│   ├── hs-baseball-beginner-3x-week-month-1.pdf
+│   ├── hs-baseball-beginner-3x-week-month-2.pdf
+│   └── ...
+├── output/                          # Search results CSV files
+└── README.md                        # This file
 ```
 
 ## 🔧 Configuration Options
@@ -224,12 +233,162 @@ rag_with_bigquery/
    - Verify the `PDF_PATH` in your `.env` file is correct
    - Use absolute paths for reliability
 
+## 🌐 API Endpoints
+
+The project now includes a FastAPI application that exposes REST endpoints for semantic search and document management.
+
+### Starting the API Server
+
+```bash
+# Install additional dependencies
+pip install -r requirements.txt
+
+# Start the server
+uvicorn api:app --reload --host 0.0.0.0 --port 8000
+```
+
+The API will be available at `http://localhost:8000` with interactive documentation at `http://localhost:8000/docs`.
+
+### Authentication
+
+All endpoints (except health check) require API key authentication via the `X-API-Key` header:
+
+```bash
+curl -H "X-API-Key: your-secret-key" http://localhost:8000/api/v1/search
+```
+
+Configure API keys in your `.env` file:
+```env
+API_KEYS=your-secret-key-1,your-secret-key-2
+```
+
+### Available Endpoints
+
+#### 1. Health Check
+```bash
+GET /api/v1/health
+```
+No authentication required. Returns service status and client connectivity.
+
+#### 2. Semantic Search
+```bash
+POST /api/v1/search
+```
+**Request:**
+```json
+{
+  "query": "Which workout has a pause at the bottom?",
+  "top_k": 5,
+  "document_names": ["workout.pdf"]  // optional
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "rank": 1,
+      "cosine": 0.8123,
+      "document_name": "workout.pdf",
+      "page_number": 2,
+      "chunk_index": 0,
+      "chunk_text": "The pause squat technique involves...",
+      "id": "uuid",
+      "document_id": "uuid"
+    }
+  ],
+  "query": "Which workout has a pause at the bottom?",
+  "total_results": 1,
+  "search_id": "uuid"
+}
+```
+
+#### 3. Download Search Results as CSV
+```bash
+GET /api/v1/search/{search_id}/csv
+```
+Downloads the search results as a CSV file using the search ID from the search response.
+
+#### 4. Upload Document
+```bash
+POST /api/v1/documents/upload
+```
+Upload a PDF file for processing. Accepts `multipart/form-data` with a PDF file.
+
+**Response:**
+```json
+{
+  "document_name": "workout.pdf",
+  "chunks_inserted": 45,
+  "document_id": "uuid",
+  "message": "Successfully processed workout.pdf"
+}
+```
+
+#### 5. Batch Document Ingestion
+```bash
+POST /api/v1/documents/ingest
+```
+**Request:**
+```json
+{
+  "pdf_directory": "/path/to/pdf/directory"
+}
+```
+
+**Response:**
+```json
+{
+  "total_discovered": 10,
+  "new_processed": 3,
+  "failed": 0,
+  "total_chunks": 150,
+  "message": "Batch ingestion completed for directory: /path/to/pdf/directory"
+}
+```
+
+#### 6. List Documents
+```bash
+GET /api/v1/documents
+```
+Returns a list of all ingested documents.
+
+**Response:**
+```json
+{
+  "documents": ["workout.pdf", "training.pdf"],
+  "total_count": 2
+}
+```
+
+### Example Usage
+
+```bash
+# Health check
+curl http://localhost:8000/api/v1/health
+
+# Search with API key
+curl -X POST "http://localhost:8000/api/v1/search" \
+  -H "X-API-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What exercises target the chest?", "top_k": 3}'
+
+# Upload a document
+curl -X POST "http://localhost:8000/api/v1/documents/upload" \
+  -H "X-API-Key: your-secret-key" \
+  -F "file=@workout.pdf"
+
+# List documents
+curl -H "X-API-Key: your-secret-key" http://localhost:8000/api/v1/documents
+```
+
 ## 🔄 Next Steps
 
 This pipeline prepares your documents for RAG applications. To build a complete RAG system, you'll need to:
 
-1. **Query Interface**: Build a system to query embeddings using cosine similarity
-2. **Retrieval Logic**: Implement semantic search to find relevant chunks
+1. **Query Interface**: Build a system to query embeddings using cosine similarity ✅ (Available via API)
+2. **Retrieval Logic**: Implement semantic search to find relevant chunks ✅ (Available via API)
 3. **Generation**: Integrate with LLMs (like Vertex AI's PaLM) for answer generation
 4. **Frontend**: Create a user interface for document Q&A
 
