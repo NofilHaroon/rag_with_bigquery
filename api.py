@@ -12,15 +12,16 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File, Header
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File, Header, Request
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import bigquery
 from vertexai.language_models import TextEmbeddingModel
 from google.api_core.exceptions import GoogleAPIError
 
 from utils import load_config, initialize_clients
-from auth import verify_api_key
+from auth import verify_api_key, verify_api_key_flexible
 from models import (
     SearchRequest, SearchResponse, SearchResult,
     DocumentUploadResponse, DocumentIngestRequest, DocumentIngestResponse,
@@ -94,6 +95,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Setup Jinja2 templates
+templates = Jinja2Templates(directory="templates")
 
 
 # Dependency to get clients
@@ -191,6 +195,25 @@ async def health_check():
         )
 
 
+# UI endpoints (no authentication required)
+@app.get("/")
+async def root():
+    """Redirect root to search page."""
+    return RedirectResponse(url="/search")
+
+
+@app.get("/search")
+async def search_page(request: Request):
+    """Render the search page."""
+    return templates.TemplateResponse("search.html", {"request": request})
+
+
+@app.get("/upload")
+async def upload_page(request: Request):
+    """Render the upload page."""
+    return templates.TemplateResponse("upload.html", {"request": request})
+
+
 # Search endpoints
 @app.post("/api/v1/search", response_model=SearchResponse)
 async def search_documents(
@@ -260,7 +283,7 @@ async def search_documents(
 @app.get("/api/v1/search/{search_id}/csv")
 async def download_search_csv(
     search_id: str,
-    api_key: str = Depends(verify_api_key),
+    api_key: str = Depends(verify_api_key_flexible),
 ):
     """Download search results as CSV file."""
     try:

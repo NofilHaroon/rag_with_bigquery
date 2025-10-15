@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+
+{% block title %}Upload - RAG with BigQuery{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h2 class="text-3xl font-bold text-gray-900 mb-2">Upload Document</h2>
+        <p class="text-gray-600">Upload PDF documents to be processed and indexed for semantic search</p>
+    </div>
+
+    <!-- API Key Configuration -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <label for="apiKey" class="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+        <input 
+            type="password" 
+            id="apiKey" 
+            placeholder="Enter your API key" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        >
+        <p class="mt-2 text-sm text-gray-600">Your API key is stored locally in your browser and never sent to any server except your API.</p>
+    </div>
+
+    <!-- Upload Form -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <form id="uploadForm">
+            <!-- Drag and Drop Area -->
+            <div 
+                id="dropZone" 
+                class="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center hover:border-blue-500 transition-colors cursor-pointer"
+            >
+                <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <div class="mt-4">
+                    <label for="fileInput" class="cursor-pointer">
+                        <span class="mt-2 block text-sm font-medium text-gray-900">
+                            Drop your PDF file here or click to browse
+                        </span>
+                        <span class="mt-1 block text-xs text-gray-500">
+                            Supported format: PDF (max 50MB)
+                        </span>
+                    </label>
+                    <input 
+                        id="fileInput" 
+                        type="file" 
+                        accept=".pdf" 
+                        class="hidden"
+                    >
+                </div>
+            </div>
+
+            <!-- Selected File Info -->
+            <div id="fileInfo" class="hidden mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <svg class="h-8 w-8 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd" />
+                        </svg>
+                        <div>
+                            <p id="fileName" class="text-sm font-medium text-gray-900"></p>
+                            <p id="fileSize" class="text-xs text-gray-500"></p>
+                        </div>
+                    </div>
+                    <button 
+                        type="button" 
+                        id="removeFile"
+                        class="text-red-600 hover:text-red-700 text-sm font-medium"
+                    >
+                        Remove
+                    </button>
+                </div>
+            </div>
+
+            <!-- Upload Button -->
+            <button 
+                type="submit" 
+                id="uploadButton"
+                class="mt-6 w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                disabled
+            >
+                Upload and Process
+            </button>
+        </form>
+    </div>
+
+    <!-- Progress Bar -->
+    <div id="progressContainer" class="hidden bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium text-gray-700">Processing document...</span>
+            <span id="progressText" class="text-sm text-gray-600">0%</span>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-2">
+            <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+    </div>
+
+    <!-- Success Message -->
+    <div id="successMessage" class="hidden bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+        <div class="flex items-start">
+            <svg class="h-5 w-5 text-green-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+            </svg>
+            <div class="ml-3">
+                <p class="text-green-800 font-medium">Upload Successful</p>
+                <p id="successText" class="text-green-700 text-sm mt-1"></p>
+                <a href="/search" class="inline-block mt-3 text-sm font-medium text-blue-600 hover:text-blue-700">
+                    Go to Search →
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Message -->
+    <div id="errorMessage" class="hidden bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+        <div class="flex items-start">
+            <svg class="h-5 w-5 text-red-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+            </svg>
+            <div class="ml-3">
+                <p class="text-red-800 font-medium">Upload Failed</p>
+                <p id="errorText" class="text-red-700 text-sm mt-1"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Info Box -->
+    <div class="bg-gray-50 border border-gray-200 rounded-lg p-6">
+        <h3 class="text-sm font-semibold text-gray-900 mb-3">Processing Information</h3>
+        <ul class="text-sm text-gray-600 space-y-2">
+            <li class="flex items-start">
+                <svg class="h-5 w-5 text-gray-400 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                </svg>
+                <span>Documents are chunked into smaller segments for better search accuracy</span>
+            </li>
+            <li class="flex items-start">
+                <svg class="h-5 w-5 text-gray-400 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                </svg>
+                <span>Each chunk is converted to embeddings using Vertex AI</span>
+            </li>
+            <li class="flex items-start">
+                <svg class="h-5 w-5 text-gray-400 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                </svg>
+                <span>Processing time depends on document size (typically 10-60 seconds)</span>
+            </li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let selectedFile = null;
+
+    // Load API key from localStorage
+    document.addEventListener('DOMContentLoaded', () => {
+        const savedKey = localStorage.getItem('apiKey');
+        if (savedKey) {
+            document.getElementById('apiKey').value = savedKey;
+        }
+    });
+
+    // Save API key to localStorage when changed
+    document.getElementById('apiKey').addEventListener('change', (e) => {
+        localStorage.setItem('apiKey', e.target.value);
+    });
+
+    // File input change handler
+    document.getElementById('fileInput').addEventListener('change', (e) => {
+        handleFileSelect(e.target.files[0]);
+    });
+
+    // Drag and drop handlers
+    const dropZone = document.getElementById('dropZone');
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('border-blue-500', 'bg-blue-50');
+    });
+
+    dropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('border-blue-500', 'bg-blue-50');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('border-blue-500', 'bg-blue-50');
+        
+        const file = e.dataTransfer.files[0];
+        if (file) {
+            handleFileSelect(file);
+        }
+    });
+
+    dropZone.addEventListener('click', () => {
+        document.getElementById('fileInput').click();
+    });
+
+    // Handle file selection
+    function handleFileSelect(file) {
+        if (!file) return;
+
+        // Validate file type
+        if (!file.name.toLowerCase().endsWith('.pdf')) {
+            showError('Only PDF files are supported');
+            return;
+        }
+
+        // Validate file size (50MB max)
+        if (file.size > 50 * 1024 * 1024) {
+            showError('File size must be less than 50MB');
+            return;
+        }
+
+        selectedFile = file;
+        
+        // Show file info
+        document.getElementById('fileName').textContent = file.name;
+        document.getElementById('fileSize').textContent = formatFileSize(file.size);
+        document.getElementById('fileInfo').classList.remove('hidden');
+        document.getElementById('uploadButton').disabled = false;
+
+        // Hide messages
+        document.getElementById('successMessage').classList.add('hidden');
+        document.getElementById('errorMessage').classList.add('hidden');
+    }
+
+    // Remove file
+    document.getElementById('removeFile').addEventListener('click', () => {
+        selectedFile = null;
+        document.getElementById('fileInput').value = '';
+        document.getElementById('fileInfo').classList.add('hidden');
+        document.getElementById('uploadButton').disabled = true;
+    });
+
+    // Handle form submission
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const apiKey = document.getElementById('apiKey').value;
+        if (!apiKey) {
+            showError('Please enter your API key');
+            return;
+        }
+
+        if (!selectedFile) {
+            showError('Please select a file to upload');
+            return;
+        }
+
+        // Show progress
+        document.getElementById('progressContainer').classList.remove('hidden');
+        document.getElementById('successMessage').classList.add('hidden');
+        document.getElementById('errorMessage').classList.add('hidden');
+        document.getElementById('uploadButton').disabled = true;
+
+        // Simulate progress
+        let progress = 0;
+        const progressInterval = setInterval(() => {
+            progress += 5;
+            if (progress > 90) progress = 90;
+            updateProgress(progress);
+        }, 200);
+
+        try {
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            const response = await fetch('/api/v1/documents/upload', {
+                method: 'POST',
+                headers: {
+                    'X-API-Key': apiKey
+                },
+                body: formData
+            });
+
+            clearInterval(progressInterval);
+            updateProgress(100);
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Upload failed');
+            }
+
+            const data = await response.json();
+            
+            setTimeout(() => {
+                document.getElementById('progressContainer').classList.add('hidden');
+                showSuccess(`Successfully processed "${data.document_name}". ${data.chunks_inserted} chunks were indexed.`);
+                
+                // Reset form
+                selectedFile = null;
+                document.getElementById('fileInput').value = '';
+                document.getElementById('fileInfo').classList.add('hidden');
+            }, 500);
+
+        } catch (error) {
+            clearInterval(progressInterval);
+            document.getElementById('progressContainer').classList.add('hidden');
+            showError(error.message);
+            document.getElementById('uploadButton').disabled = false;
+        }
+    });
+
+    // Update progress bar
+    function updateProgress(percent) {
+        document.getElementById('progressBar').style.width = percent + '%';
+        document.getElementById('progressText').textContent = percent + '%';
+    }
+
+    // Show success message
+    function showSuccess(message) {
+        document.getElementById('successText').textContent = message;
+        document.getElementById('successMessage').classList.remove('hidden');
+    }
+
+    // Show error message
+    function showError(message) {
+        document.getElementById('errorText').textContent = message;
+        document.getElementById('errorMessage').classList.remove('hidden');
+    }
+
+    // Format file size
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+</script>
+{% endblock %}
+

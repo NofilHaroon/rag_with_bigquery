@@ -7,3 +7,4 @@ ipykernel
 fastapi[standard]
 uvicorn[standard]
 python-multipart
+jinja2
