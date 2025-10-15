@@ -358,13 +358,26 @@ async def upload_document(
     api_key: str = Depends(verify_api_key),
     clients=Depends(get_clients)
 ):
-    """Upload and process a PDF document."""
+    """Upload and process a PDF document (idempotent)."""
     try:
         # Validate file type
         if not file.filename.lower().endswith('.pdf'):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Only PDF files are supported"
+            )
+        
+        original_name = os.path.basename(file.filename)
+        
+        # Check if document already exists
+        existing_names = get_existing_document_names()
+        if original_name in existing_names:
+            logger.info(f"📋 Document '{original_name}' already exists, skipping upload")
+            return DocumentUploadResponse(
+                document_name=original_name,
+                chunks_inserted=0,
+                document_id="",
+                message=f"Document '{original_name}' already exists and was skipped"
             )
         
         # Save uploaded file temporarily
@@ -375,12 +388,12 @@ async def upload_document(
         
         try:
             # Process the document, preserving the original uploaded name (basename only)
-            original_name = os.path.basename(file.filename)
             chunks_inserted = process_single_document(
                 temp_file_path,
                 document_name=original_name,
             )
             
+            logger.info(f"✅ Successfully processed new document: {original_name} ({chunks_inserted} chunks)")
             return DocumentUploadResponse(
                 document_name=original_name,
                 chunks_inserted=chunks_inserted,
