@@ -197,15 +197,14 @@ def get_existing_document_names() -> set:
     except Exception:
         return set()
 
-    # Use tabledata.list via list_rows to avoid requiring bigquery.jobs.create
+    # Success path: read rows to collect names
     try:
         rows = bq_client.list_rows(
             table_ref,
             selected_fields=[bigquery.SchemaField("document_name", "STRING")],
         )
-        names = set()
+        names: set = set()
         for row in rows:
-            # Access by field name for clarity
             name = row["document_name"]
             if name:
                 names.add(name)
@@ -220,6 +219,77 @@ def get_existing_document_names() -> set:
     except GoogleAPIError as e:
         logger.exception("Failed to fetch existing document names via list_rows: %s", e)
         return set()
+
+
+# === BigQuery Delete ===
+def delete_document_by_name(document_name: str) -> int:
+    """Delete all rows from the embeddings table for a given document name.
+
+    Returns the number of rows deleted, or 0 if none.
+    """
+    table_ref = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
+
+    # Ensure the table exists; if not, nothing to delete
+    try:
+        bq_client.get_table(table_ref)
+    except Exception:
+        logger.info("Table not found; nothing to delete for %s", document_name)
+        return 0
+
+    # First, count how many rows match (so we can return a useful value)
+    count_sql = f"""
+    SELECT COUNT(1) AS cnt
+    FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}`
+    WHERE document_name = @document_name
+    """
+
+    count_cfg = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("document_name", "STRING", document_name)
+        ]
+    )
+
+    try:
+        count_job = bq_client.query(count_sql, job_config=count_cfg)
+        count_rows = list(count_job.result())
+        to_delete = int(count_rows[0]["cnt"]) if count_rows else 0
+    except Exception as e:
+        logger.exception("Failed counting rows to delete for %s: %s", document_name, e)
+        raise
+
+    if to_delete == 0:
+        logger.info("No rows found for document %s; nothing to delete.", document_name)
+        return 0
+
+    # Use CTAS (CREATE OR REPLACE TABLE ... AS SELECT) to bypass streaming buffer restriction
+    # This rewrites the table without the matching rows.
+    replace_sql = f"""
+    CREATE OR REPLACE TABLE `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}` AS
+    SELECT *
+    FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}`
+    WHERE document_name != @document_name
+    """
+
+    replace_cfg = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("document_name", "STRING", document_name)
+        ]
+    )
+
+    try:
+        job = bq_client.query(replace_sql, job_config=replace_cfg)
+        job.result()
+        logger.info("🗑️ Rewrote table to remove %d rows for %s", to_delete, document_name)
+        return to_delete
+    except PermissionDenied as e:
+        logger.error("PermissionDenied deleting rows for %s: %s", document_name, getattr(e, "errors", str(e)))
+        raise
+    except ClientError as e:
+        logger.error("ClientError deleting rows for %s: %s", document_name, getattr(e, "errors", str(e)))
+        raise
+    except GoogleAPIError as e:
+        logger.exception("BigQuery table rewrite failed for %s: %s", document_name, e)
+        raise
 
 
 # === BigQuery Insert ===
@@ -247,9 +317,13 @@ def insert_embeddings(rows: List[Dict]):
 
 
 # === Process Single Document ===
-def process_single_document(pdf_path: str) -> int:
-    """Process a single PDF document and return the number of chunks inserted."""
-    document_name = os.path.basename(pdf_path)
+def process_single_document(pdf_path: str, document_name: str | None = None) -> int:
+    """Process a single PDF document and return the number of chunks inserted.
+
+    If `document_name` is provided, it will be used for BigQuery rows. Otherwise,
+    the file basename of `pdf_path` is used.
+    """
+    document_name = document_name or os.path.basename(pdf_path)
     document_id = str(uuid.uuid4())
 
     logger.info(f"📄 Starting document processing: {document_name}")

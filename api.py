@@ -24,12 +24,17 @@ from auth import verify_api_key
 from models import (
     SearchRequest, SearchResponse, SearchResult,
     DocumentUploadResponse, DocumentIngestRequest, DocumentIngestResponse,
-    DocumentListResponse, HealthResponse, ErrorResponse
+    DocumentListResponse, DocumentDeleteResponse, HealthResponse, ErrorResponse
 )
 
 # Import functions from existing scripts
 from search_similarity import run_similarity_search, embed_query
-from rag_with_bigquery_pdf_metadata import process_single_document, add_new_pdfs, get_existing_document_names
+from rag_with_bigquery_pdf_metadata import (
+    process_single_document,
+    add_new_pdfs,
+    get_existing_document_names,
+    delete_document_by_name,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -346,14 +351,18 @@ async def upload_document(
             temp_file_path = temp_file.name
         
         try:
-            # Process the document
-            chunks_inserted = process_single_document(temp_file_path)
+            # Process the document, preserving the original uploaded name (basename only)
+            original_name = os.path.basename(file.filename)
+            chunks_inserted = process_single_document(
+                temp_file_path,
+                document_name=original_name,
+            )
             
             return DocumentUploadResponse(
-                document_name=file.filename,
+                document_name=original_name,
                 chunks_inserted=chunks_inserted,
                 document_id="",  # Would need to modify process_single_document to return this
-                message=f"Successfully processed {file.filename}"
+                message=f"Successfully processed {original_name}"
             )
             
         finally:
@@ -431,6 +440,41 @@ async def list_documents(
             detail=f"Failed to list documents: {str(e)}"
         )
 
+
+@app.delete("/api/v1/documents/{document_name}", response_model=DocumentDeleteResponse)
+async def delete_document(
+    document_name: str,
+    api_key: str = Depends(verify_api_key),
+    clients=Depends(get_clients)
+):
+    """Delete all BigQuery rows for the given document name."""
+    try:
+        # Perform deletion
+        rows_deleted = delete_document_by_name(document_name)
+
+        message = (
+            f"Deleted {rows_deleted} rows for document '{document_name}'"
+            if rows_deleted > 0
+            else f"No rows found for document '{document_name}'"
+        )
+
+        return DocumentDeleteResponse(
+            document_name=document_name,
+            rows_deleted=rows_deleted,
+            message=message,
+        )
+    except GoogleAPIError as e:
+        logger.exception("Google API error during delete: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Delete failed: {str(e)}"
+        )
+    except Exception as e:
+        logger.exception("Unexpected error during delete: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Delete failed: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn

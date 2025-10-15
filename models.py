@@ -66,6 +66,13 @@ class DocumentListResponse(BaseModel):
     total_count: int
 
 
+class DocumentDeleteResponse(BaseModel):
+    """Response model for deleting a document by name."""
+    document_name: str
+    rows_deleted: int
+    message: str
+
+
 # Health Check Models
 class HealthResponse(BaseModel):
     """Response model for health check."""
