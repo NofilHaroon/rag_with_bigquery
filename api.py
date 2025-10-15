@@ -25,7 +25,8 @@ from auth import verify_api_key, verify_api_key_flexible
 from models import (
     SearchRequest, SearchResponse, SearchResult,
     DocumentUploadResponse, DocumentIngestRequest, DocumentIngestResponse,
-    DocumentListResponse, DocumentDeleteResponse, HealthResponse, ErrorResponse
+    DocumentListResponse, DocumentDeleteResponse, HealthResponse, ErrorResponse,
+    JsonDocumentProcessRequest, JsonDocumentProcessResponse
 )
 
 # Import functions from existing scripts
@@ -35,6 +36,7 @@ from rag_with_bigquery_pdf_metadata import (
     add_new_pdfs,
     get_existing_document_names,
     delete_document_by_name,
+    process_json_document,
 )
 
 # Configure logging
@@ -517,6 +519,52 @@ async def delete_document(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Delete failed: {str(e)}"
         )
+
+
+@app.post("/api/v1/documents/process-json", response_model=JsonDocumentProcessResponse)
+async def process_json_document_endpoint(
+    request: JsonDocumentProcessRequest,
+    api_key: str = Depends(verify_api_key),
+    clients=Depends(get_clients)
+):
+    """Process a JSON document and insert its chunks into BigQuery."""
+    try:
+        logger.info(f"Processing JSON document: {request.json_path}")
+        
+        # Validate that the JSON file exists
+        if not os.path.exists(request.json_path):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"JSON file not found: {request.json_path}"
+            )
+        
+        # Process the JSON document
+        chunks_inserted = process_json_document(
+            json_path=request.json_path,
+            document_name=request.document_name
+        )
+        
+        # Extract document name from the processed file for response
+        document_name = request.document_name or os.path.basename(request.json_path)
+        
+        logger.info(f"✅ Successfully processed JSON document: {document_name} ({chunks_inserted} chunks)")
+        
+        return JsonDocumentProcessResponse(
+            document_name=document_name,
+            document_id="",  # process_json_document doesn't return document_id currently
+            chunks_inserted=chunks_inserted,
+            message=f"Successfully processed JSON document '{document_name}' with {chunks_inserted} chunks"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error processing JSON document: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process JSON document: {str(e)}"
+        )
+
 
 if __name__ == "__main__":
     import uvicorn

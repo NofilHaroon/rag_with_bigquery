@@ -73,6 +73,20 @@ class DocumentDeleteResponse(BaseModel):
     message: str
 
 
+class JsonDocumentProcessRequest(BaseModel):
+    """Request model for processing JSON documents."""
+    json_path: str = Field(..., description="Path to the JSON file to process")
+    document_name: Optional[str] = Field(default=None, description="Custom document name (optional)")
+
+
+class JsonDocumentProcessResponse(BaseModel):
+    """Response model for JSON document processing."""
+    document_name: str
+    document_id: str
+    chunks_inserted: int
+    message: str
+
+
 # Health Check Models
 class HealthResponse(BaseModel):
     """Response model for health check."""
