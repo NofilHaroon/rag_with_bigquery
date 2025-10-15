@@ -165,8 +165,9 @@
         const savedKey = localStorage.getItem('apiKey');
         if (savedKey) {
             document.getElementById('apiKey').value = savedKey;
+            // Load documents immediately if API key is available
+            loadDocuments();
         }
-        loadDocuments();
         
         // Add event listener for document filter changes
         document.getElementById('documentFilter').addEventListener('change', updateSelectionCount);
@@ -175,12 +176,19 @@
     // Save API key to localStorage when changed
     document.getElementById('apiKey').addEventListener('change', (e) => {
         localStorage.setItem('apiKey', e.target.value);
+        // Load documents when API key is entered/changed
+        loadDocuments();
     });
 
     // Load available documents for filter
     async function loadDocuments() {
         const apiKey = document.getElementById('apiKey').value;
-        if (!apiKey) return;
+        if (!apiKey) {
+            // Show placeholder when no API key
+            const select = document.getElementById('documentFilter');
+            select.innerHTML = '<option value="" disabled selected>Enter API key to load documents</option>';
+            return;
+        }
 
         try {
             const response = await fetch('/api/v1/documents', {
