@@ -1,0 +1,406 @@
+{% extends "base.html" %}
+
+{% block title %}Search - RAG with BigQuery{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h2 class="text-3xl font-bold text-gray-900 mb-2">Semantic Search</h2>
+        <p class="text-gray-600">Search through your document embeddings using natural language queries</p>
+    </div>
+
+    <!-- API Key Configuration -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <label for="apiKey" class="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+        <input 
+            type="password" 
+            id="apiKey" 
+            placeholder="Enter your API key" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        >
+        <p class="mt-2 text-sm text-gray-600">Your API key is stored locally in your browser and never sent to any server except your API.</p>
+    </div>
+
+    <!-- Search Form -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <form id="searchForm" class="space-y-4">
+            <div>
+                <label for="query" class="block text-sm font-medium text-gray-700 mb-2">Search Query</label>
+                <textarea 
+                    id="query" 
+                    rows="3" 
+                    placeholder="e.g., Which workout has a pause at the bottom?"
+                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    required
+                ></textarea>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label for="topK" class="block text-sm font-medium text-gray-700 mb-2">Number of Results</label>
+                    <select 
+                        id="topK" 
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                        <option value="5" selected>5 results</option>
+                        <option value="10">10 results</option>
+                        <option value="20">20 results</option>
+                        <option value="50">50 results</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label for="documentFilter" class="block text-sm font-medium text-gray-700 mb-2">Filter by Document (Optional)</label>
+                    <div class="relative">
+                        <select 
+                            id="documentFilter" 
+                            multiple
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                            style="min-height: 100px;"
+                        >
+                            <!-- Will be populated dynamically -->
+                        </select>
+                    </div>
+                    <div class="mt-2 flex justify-between items-center">
+                        <p class="text-xs text-gray-500">Hold Ctrl/Cmd to select multiple documents</p>
+                        <button 
+                            type="button" 
+                            id="clearSelection"
+                            class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                            onclick="clearDocumentSelection()"
+                        >
+                            Clear Selection
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex space-x-3">
+                <button 
+                    type="submit" 
+                    id="searchButton"
+                    class="flex-1 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                >
+                    Search
+                </button>
+                <button 
+                    type="button" 
+                    id="downloadButton"
+                    class="hidden px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                >
+                    Download CSV
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loadingState" class="hidden bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+        <div class="flex items-center justify-center space-x-3">
+            <div class="spinner"></div>
+            <span class="text-gray-600">Searching...</span>
+        </div>
+    </div>
+
+    <!-- Error Message -->
+    <div id="errorMessage" class="hidden bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+        <p class="text-red-800 font-medium">Error</p>
+        <p id="errorText" class="text-red-600 text-sm mt-1"></p>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="hidden">
+        <div class="mb-4 flex items-center justify-between">
+            <h3 class="text-xl font-semibold text-gray-900">Search Results</h3>
+            <span id="resultCount" class="text-sm text-gray-600"></span>
+        </div>
+        <div id="resultsList" class="space-y-4">
+            <!-- Results will be inserted here -->
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+    /* Custom styling for multiselect */
+    #documentFilter {
+        scrollbar-width: thin;
+        scrollbar-color: #cbd5e0 #f7fafc;
+    }
+    
+    #documentFilter::-webkit-scrollbar {
+        width: 8px;
+    }
+    
+    #documentFilter::-webkit-scrollbar-track {
+        background: #f7fafc;
+        border-radius: 4px;
+    }
+    
+    #documentFilter::-webkit-scrollbar-thumb {
+        background: #cbd5e0;
+        border-radius: 4px;
+    }
+    
+    #documentFilter::-webkit-scrollbar-thumb:hover {
+        background: #a0aec0;
+    }
+    
+    #documentFilter option:checked {
+        background: #3b82f6;
+        color: white;
+    }
+    
+    #documentFilter option:hover {
+        background: #e2e8f0;
+    }
+</style>
+<script>
+    let currentSearchId = null;
+
+    // Load API key from localStorage
+    document.addEventListener('DOMContentLoaded', () => {
+        const savedKey = localStorage.getItem('apiKey');
+        if (savedKey) {
+            document.getElementById('apiKey').value = savedKey;
+            // Load documents immediately if API key is available
+            loadDocuments();
+        }
+        
+        // Add event listener for document filter changes
+        document.getElementById('documentFilter').addEventListener('change', updateSelectionCount);
+    });
+
+    // Save API key to localStorage when changed
+    document.getElementById('apiKey').addEventListener('change', (e) => {
+        localStorage.setItem('apiKey', e.target.value);
+        // Load documents when API key is entered/changed
+        loadDocuments();
+    });
+
+    // Load available documents for filter
+    async function loadDocuments() {
+        const apiKey = document.getElementById('apiKey').value;
+        if (!apiKey) {
+            // Show placeholder when no API key
+            const select = document.getElementById('documentFilter');
+            select.innerHTML = '<option value="" disabled selected>Enter API key to load documents</option>';
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/v1/documents', {
+                headers: {
+                    'X-API-Key': apiKey
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const select = document.getElementById('documentFilter');
+                select.innerHTML = ''; // Remove the "All Documents" option for multiselect
+                
+                if (data.documents.length === 0) {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'No documents available';
+                    option.disabled = true;
+                    select.appendChild(option);
+                } else {
+                    data.documents.forEach(doc => {
+                        const option = document.createElement('option');
+                        option.value = doc;
+                        option.textContent = doc;
+                        select.appendChild(option);
+                    });
+                }
+                
+                // Add event listener to show selection count
+                updateSelectionCount();
+            }
+        } catch (error) {
+            console.error('Error loading documents:', error);
+            const select = document.getElementById('documentFilter');
+            select.innerHTML = '<option value="" disabled>Error loading documents</option>';
+        }
+    }
+
+    // Update selection count display
+    function updateSelectionCount() {
+        const select = document.getElementById('documentFilter');
+        const selectedCount = select.selectedOptions.length;
+        const label = document.querySelector('label[for="documentFilter"]');
+        
+        if (selectedCount === 0) {
+            label.textContent = 'Filter by Document (Optional) - All documents will be searched';
+        } else if (selectedCount === 1) {
+            label.textContent = `Filter by Document (Optional) - 1 document selected`;
+        } else {
+            label.textContent = `Filter by Document (Optional) - ${selectedCount} documents selected`;
+        }
+    }
+
+    // Clear document selection
+    function clearDocumentSelection() {
+        const select = document.getElementById('documentFilter');
+        Array.from(select.options).forEach(option => {
+            option.selected = false;
+        });
+        updateSelectionCount();
+    }
+
+    // Handle search form submission
+    document.getElementById('searchForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const apiKey = document.getElementById('apiKey').value;
+        if (!apiKey) {
+            showError('Please enter your API key');
+            return;
+        }
+
+        const query = document.getElementById('query').value.trim();
+        const topK = parseInt(document.getElementById('topK').value);
+        const documentFilter = Array.from(document.getElementById('documentFilter').selectedOptions)
+            .map(opt => opt.value)
+            .filter(val => val !== '');
+
+        if (!query) {
+            showError('Please enter a search query');
+            return;
+        }
+
+        // Show loading state
+        document.getElementById('loadingState').classList.remove('hidden');
+        document.getElementById('results').classList.add('hidden');
+        document.getElementById('errorMessage').classList.add('hidden');
+        document.getElementById('downloadButton').classList.add('hidden');
+
+        try {
+            const requestBody = {
+                query: query,
+                top_k: topK,
+                document_names: documentFilter // Always include document_names, even if empty array
+            };
+
+            const response = await fetch('/api/v1/search', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-Key': apiKey
+                },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Search failed');
+            }
+
+            const data = await response.json();
+            currentSearchId = data.search_id;
+            displayResults(data);
+
+        } catch (error) {
+            showError(error.message);
+        } finally {
+            document.getElementById('loadingState').classList.add('hidden');
+        }
+    });
+
+    // Display search results
+    function displayResults(data) {
+        const resultsList = document.getElementById('resultsList');
+        const results = document.getElementById('results');
+        const resultCount = document.getElementById('resultCount');
+
+        resultsList.innerHTML = '';
+
+        if (data.results.length === 0) {
+            resultsList.innerHTML = '<p class="text-gray-600 text-center py-8">No results found</p>';
+            results.classList.remove('hidden');
+            return;
+        }
+
+        resultCount.textContent = `${data.total_results} result${data.total_results !== 1 ? 's' : ''} for "${data.query}"`;
+
+        data.results.forEach((result, index) => {
+            const resultCard = document.createElement('div');
+            resultCard.className = 'bg-white rounded-lg shadow-sm border border-gray-200 p-5 hover:shadow-md transition-shadow';
+            
+            const chunkPreview = result.chunk_text.length > 200 
+                ? result.chunk_text.substring(0, 200) + '...' 
+                : result.chunk_text;
+
+            resultCard.innerHTML = `
+                <div class="flex items-start justify-between mb-3">
+                    <div class="flex items-center space-x-3">
+                        <span class="bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">#${result.rank}</span>
+                        <span class="text-sm text-gray-600">Similarity: <span class="font-semibold text-gray-900">${(result.cosine * 100).toFixed(1)}%</span></span>
+                    </div>
+                </div>
+                <div class="mb-2">
+                    <span class="text-sm font-medium text-gray-700">${result.document_name}</span>
+                    ${result.page_number ? `<span class="text-sm text-gray-500"> • Page ${result.page_number}</span>` : ''}
+                    ${result.chunk_index !== null ? `<span class="text-sm text-gray-500"> • Chunk ${result.chunk_index}</span>` : ''}
+                </div>
+                <div class="text-gray-700">
+                    <p id="preview-${index}" class="text-sm leading-relaxed">${escapeHtml(chunkPreview)}</p>
+                    ${result.chunk_text.length > 200 ? `
+                        <p id="full-${index}" class="hidden text-sm leading-relaxed">${escapeHtml(result.chunk_text)}</p>
+                        <button onclick="toggleText(${index})" class="text-blue-600 hover:text-blue-700 text-sm font-medium mt-2">
+                            <span id="btn-${index}">Show more</span>
+                        </button>
+                    ` : ''}
+                </div>
+            `;
+
+            resultsList.appendChild(resultCard);
+        });
+
+        results.classList.remove('hidden');
+        document.getElementById('downloadButton').classList.remove('hidden');
+    }
+
+    // Toggle full text display
+    function toggleText(index) {
+        const preview = document.getElementById(`preview-${index}`);
+        const full = document.getElementById(`full-${index}`);
+        const btn = document.getElementById(`btn-${index}`);
+
+        if (full.classList.contains('hidden')) {
+            preview.classList.add('hidden');
+            full.classList.remove('hidden');
+            btn.textContent = 'Show less';
+        } else {
+            preview.classList.remove('hidden');
+            full.classList.add('hidden');
+            btn.textContent = 'Show more';
+        }
+    }
+
+    // Download CSV
+    document.getElementById('downloadButton').addEventListener('click', async () => {
+        if (!currentSearchId) return;
+
+        const apiKey = document.getElementById('apiKey').value;
+        window.location.href = `/api/v1/search/${currentSearchId}/csv?X-API-Key=${encodeURIComponent(apiKey)}`;
+    });
+
+    // Show error message
+    function showError(message) {
+        document.getElementById('errorText').textContent = message;
+        document.getElementById('errorMessage').classList.remove('hidden');
+    }
+
+    // Escape HTML to prevent XSS
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+</script>
+{% endblock %}
+

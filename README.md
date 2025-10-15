@@ -165,15 +165,28 @@ AND page_number = 1;
 
 ```
 rag_with_bigquery/
+├── api.py                           # FastAPI application with REST endpoints
+├── auth.py                          # API key authentication
+├── models.py                        # Pydantic request/response models
+├── utils.py                         # Shared utilities and client initialization
 ├── rag_with_bigquery_pdf_metadata.py  # Main pipeline script
-├── search_similarity.py               # Similarity search over embeddings
-├── requirements.txt                    # Python dependencies
-├── .env                               # Environment configuration (create this)
-├── .gitignore                         # Git ignore rules
-├── keys/                              # Service account keys (gitignored)
-│   └── service_account.json          # Your GCP credentials
-├── Lorem_ipsum.pdf                    # Example PDF document
-└── README.md                          # This file
+├── search_similarity.py             # Similarity search over embeddings
+├── requirements.txt                  # Python dependencies
+├── .env                             # Environment configuration (create this)
+├── .env.example                     # Environment configuration template
+├── .gitignore                       # Git ignore rules
+├── keys/                            # Service account keys (gitignored)
+│   └── service_account.json        # Your GCP credentials
+├── templates/                       # Jinja2 templates for web UI
+│   ├── base.html                   # Base template with navigation
+│   ├── search.html                 # Search interface
+│   └── upload.html                 # Upload interface
+├── pdf/                             # PDF documents directory
+│   ├── hs-baseball-beginner-3x-week-month-1.pdf
+│   ├── hs-baseball-beginner-3x-week-month-2.pdf
+│   └── ...
+├── output/                          # Search results CSV files
+└── README.md                        # This file
 ```
 
 ## 🔧 Configuration Options
@@ -224,14 +237,257 @@ rag_with_bigquery/
    - Verify the `PDF_PATH` in your `.env` file is correct
    - Use absolute paths for reliability
 
+## 🌐 API Endpoints
+
+The project now includes a FastAPI application that exposes REST endpoints for semantic search and document management.
+
+### Starting the API Server
+
+```bash
+# Install additional dependencies
+pip install -r requirements.txt
+
+# Start the server
+uvicorn api:app --reload --host 0.0.0.0 --port 8000
+```
+
+The API will be available at `http://localhost:8000` with interactive documentation at `http://localhost:8000/docs`.
+
+### Authentication
+
+All endpoints (except health check) require API key authentication via the `X-API-Key` header:
+
+```bash
+curl -H "X-API-Key: your-secret-key" http://localhost:8000/api/v1/search
+```
+
+Configure API keys in your `.env` file:
+```env
+API_KEYS=your-secret-key-1,your-secret-key-2
+```
+
+### Available Endpoints
+
+#### 1. Health Check
+```bash
+GET /api/v1/health
+```
+No authentication required. Returns service status and client connectivity.
+
+#### 2. Semantic Search
+```bash
+POST /api/v1/search
+```
+**Request:**
+```json
+{
+  "query": "Which workout has a pause at the bottom?",
+  "top_k": 5,
+  "document_names": ["workout.pdf"]  // optional
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "rank": 1,
+      "cosine": 0.8123,
+      "document_name": "workout.pdf",
+      "page_number": 2,
+      "chunk_index": 0,
+      "chunk_text": "The pause squat technique involves...",
+      "id": "uuid",
+      "document_id": "uuid"
+    }
+  ],
+  "query": "Which workout has a pause at the bottom?",
+  "total_results": 1,
+  "search_id": "uuid"
+}
+```
+
+#### 3. Download Search Results as CSV
+```bash
+GET /api/v1/search/{search_id}/csv
+```
+Downloads the search results as a CSV file using the search ID from the search response.
+
+#### 4. Upload Document
+```bash
+POST /api/v1/documents/upload
+```
+Upload a PDF file for processing. Accepts `multipart/form-data` with a PDF file.
+
+**Response:**
+```json
+{
+  "document_name": "workout.pdf",
+  "chunks_inserted": 45,
+  "document_id": "uuid",
+  "message": "Successfully processed workout.pdf"
+}
+```
+
+#### 5. Batch Document Ingestion
+```bash
+POST /api/v1/documents/ingest
+```
+**Request:**
+```json
+{
+  "pdf_directory": "/path/to/pdf/directory"
+}
+```
+
+**Response:**
+```json
+{
+  "total_discovered": 10,
+  "new_processed": 3,
+  "failed": 0,
+  "total_chunks": 150,
+  "message": "Batch ingestion completed for directory: /path/to/pdf/directory"
+}
+```
+
+#### 6. List Documents
+```bash
+GET /api/v1/documents
+```
+Returns a list of all ingested documents.
+
+**Response:**
+```json
+{
+  "documents": ["workout.pdf", "training.pdf"],
+  "total_count": 2
+}
+```
+
+### Example Usage
+
+```bash
+# Health check
+curl http://localhost:8000/api/v1/health
+
+# Search with API key
+curl -X POST "http://localhost:8000/api/v1/search" \
+  -H "X-API-Key: your-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What exercises target the chest?", "top_k": 3}'
+
+# Upload a document
+curl -X POST "http://localhost:8000/api/v1/documents/upload" \
+  -H "X-API-Key: your-secret-key" \
+  -F "file=@workout.pdf"
+
+# List documents
+curl -H "X-API-Key: your-secret-key" http://localhost:8000/api/v1/documents
+```
+
+## 🎨 Web UI
+
+The project includes a minimalistic and intuitive web interface for semantic search and document upload functionality.
+
+### Accessing the Web UI
+
+Once the server is running:
+
+```bash
+uvicorn api:app --reload --host 0.0.0.0 --port 8000
+```
+
+Navigate to:
+- **Search Interface**: `http://localhost:8000/search`
+- **Upload Interface**: `http://localhost:8000/upload`
+- **Root URL**: `http://localhost:8000/` (redirects to search)
+
+### UI Features
+
+#### Search Page (`/search`)
+
+The search page provides an easy-to-use interface for semantic search:
+
+- **API Key Configuration**: Enter and save your API key locally in the browser
+- **Search Query Input**: Natural language text area for your search queries
+- **Results Control**: Dropdown to select number of results (5, 10, 20, or 50)
+- **Document Filtering**: Optional multi-select to filter by specific documents
+- **Results Display**: 
+  - Ranked results with similarity scores
+  - Document name, page number, and chunk index
+  - Expandable text chunks (show more/less functionality)
+  - Clean card-based layout
+- **CSV Export**: Download search results with a single click
+- **Real-time Feedback**: Loading states and error handling
+
+**Usage:**
+1. Enter your API key (stored securely in your browser's localStorage)
+2. Type your search query
+3. Select the number of results you want
+4. Optionally filter by specific documents
+5. Click "Search" to see results
+6. Click "Download CSV" to export results
+
+#### Upload Page (`/upload`)
+
+The upload page allows you to easily add new documents to your RAG system:
+
+- **Drag & Drop**: Drag PDF files directly onto the upload area
+- **File Browser**: Click to browse and select PDF files
+- **File Validation**: 
+  - PDF-only validation
+  - File size limit (50MB max)
+- **Upload Progress**: Visual progress bar during processing
+- **Success Feedback**: Confirmation with chunk count
+- **Quick Navigation**: Link to search page after successful upload
+- **Processing Information**: Helpful tips about document processing
+
+**Usage:**
+1. Enter your API key
+2. Drag and drop a PDF file or click to browse
+3. Review the selected file
+4. Click "Upload and Process"
+5. Wait for processing to complete
+6. Navigate to search to query your new document
+
+### API Key Management
+
+For security and convenience:
+- API keys are stored in your browser's localStorage (never sent to external servers)
+- Keys are automatically loaded on page refresh
+- The same key is shared between search and upload pages
+- Keys are only sent to your configured API endpoints via the `X-API-Key` header
+
+### Styling and Design
+
+The UI uses:
+- **Tailwind CSS** from CDN (no build step required)
+- **Minimalistic Design**: Clean, professional appearance
+- **Responsive Layout**: Works on desktop and mobile devices
+- **Intuitive Navigation**: Simple top navigation bar
+- **Visual Feedback**: Loading states, error messages, success confirmations
+- **Modern Components**: Cards, forms, buttons with hover effects
+
+### Browser Compatibility
+
+The web UI uses modern JavaScript features and is compatible with:
+- Chrome/Edge (latest versions)
+- Firefox (latest versions)
+- Safari (latest versions)
+
+No additional build tools or npm packages required - just open your browser!
+
 ## 🔄 Next Steps
 
 This pipeline prepares your documents for RAG applications. To build a complete RAG system, you'll need to:
 
-1. **Query Interface**: Build a system to query embeddings using cosine similarity
-2. **Retrieval Logic**: Implement semantic search to find relevant chunks
-3. **Generation**: Integrate with LLMs (like Vertex AI's PaLM) for answer generation
-4. **Frontend**: Create a user interface for document Q&A
+1. **Query Interface**: Build a system to query embeddings using cosine similarity ✅ (Available via API & UI)
+2. **Retrieval Logic**: Implement semantic search to find relevant chunks ✅ (Available via API & UI)
+3. **Document Management**: Upload and manage documents ✅ (Available via API & UI)
+4. **Generation**: Integrate with LLMs (like Vertex AI's PaLM) for answer generation
+5. **Advanced Features**: Add features like document deletion UI, batch upload UI, etc.
 
 ## 📄 License
 
