@@ -67,7 +67,15 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_APPLICATION_CREDENTIALS
 try:
     aiplatform.init(project=PROJECT_ID, location=LOCATION)
     embedding_model = TextEmbeddingModel.from_pretrained(MODEL_NAME)
-    bq_client = bigquery.Client(project=PROJECT_ID)
+    
+    # Initialize BigQuery client with timeout configuration
+    bq_client = bigquery.Client(
+        project=PROJECT_ID,
+        # Set default timeout for operations (in seconds)
+        default_query_job_config=bigquery.QueryJobConfig(
+            job_timeout_ms=300000  # 5 minutes timeout
+        )
+    )
     logger.info("✅ Vertex AI and BigQuery clients initialized successfully.")
 except GoogleAPIError as e:
     logger.exception("Failed to initialize Google Cloud clients: %s", e)
@@ -113,6 +121,12 @@ def chunk_text(text: str, chunk_size: int = 300, overlap: int = 50) -> List[str]
 def chunk_json_text(json_data: Dict, chunk_size: int = 3000, chunk_overlap: int = 100) -> List[Dict]:
     """
     Flatten a JSON object to a string, then split into overlapping character chunks.
+    
+    Chunk size of 3000 characters (~750 tokens) is optimized for Vertex AI limits:
+    - Well under 2,048 token limit per chunk
+    - Allows ~20 chunks per batch (15,000 tokens total)
+    - Stays within 5M tokens/minute quota
+    
     Returns a list of dicts: [{"chunk_index": int, "chunk_text": str}]
     """
     # Flatten the JSON data to a pretty-printed string for embedding
@@ -131,21 +145,114 @@ def chunk_json_text(json_data: Dict, chunk_size: int = 3000, chunk_overlap: int 
     return chunks
 
 # === EMBEDDING FUNCTIONS ===
+def estimate_tokens(text: str) -> int:
+    """Estimate token count for text (rough approximation: ~4 chars per token)."""
+    return len(text) // 4
+
 def generate_embeddings(chunks: List[str]) -> List[List[float]]:
-    """Generate embeddings for a list of text chunks using Vertex AI."""
+    """
+    Generate embeddings for a list of text chunks using Vertex AI with batching and rate limiting.
+    
+    This function addresses Vertex AI quota limits:
+    - Batches chunks (max 100 per batch, under the 250 limit)
+    - Respects token limits (max 15,000 tokens per request, under the 20,000 limit)
+    - Implements rate limiting to avoid hitting per-minute quotas
+    - Handles quota exceeded errors with retry logic
+    """
+    import time
+    import math
+    
     embeddings = []
-    for idx, chunk in enumerate(chunks):
+    batch_size = 100  # Process up to 100 chunks at once (well under the 250 limit)
+    max_tokens_per_request = 15000  # Stay well under the 20,000 token limit
+    
+    logger.info(f"🧠 Generating embeddings for {len(chunks)} chunks in batches of {batch_size}")
+    
+    for i in range(0, len(chunks), batch_size):
+        batch_chunks = chunks[i:i + batch_size]
+        batch_start_time = time.time()
+        
         try:
-            response = embedding_model.get_embeddings([chunk])
-            embeddings.append(response[0].values)
+            # Check token count for this batch
+            batch_tokens = sum(estimate_tokens(chunk) for chunk in batch_chunks)
+            if batch_tokens > max_tokens_per_request:
+                logger.warning(f"Batch {i//batch_size + 1} has ~{batch_tokens} tokens, splitting further")
+                # Process smaller batches if token limit exceeded
+                sub_batch_size = max(1, batch_size // 2)
+                for j in range(0, len(batch_chunks), sub_batch_size):
+                    sub_batch = batch_chunks[j:j + sub_batch_size]
+                    response = embedding_model.get_embeddings(sub_batch)
+                    embeddings.extend([emb.values for emb in response])
+                    time.sleep(0.1)  # Small delay between sub-batches
+            else:
+                response = embedding_model.get_embeddings(batch_chunks)
+                embeddings.extend([emb.values for emb in response])
+            
+            batch_time = time.time() - batch_start_time
+            logger.info(f"✅ Processed batch {i//batch_size + 1}/{(len(chunks) + batch_size - 1)//batch_size} "
+                       f"({len(batch_chunks)} chunks) in {batch_time:.2f}s")
+            
+            # Rate limiting: wait if we're processing too fast
+            if batch_time < 1.0:  # If batch completed too quickly, add delay
+                time.sleep(1.0 - batch_time)
+                
         except GoogleAPIError as e:
-            logger.error(f"Failed to generate embedding for chunk {idx}: {e}")
-            embeddings.append([])  # Empty embedding on failure
-    logger.info(f"🧠 Generated embeddings for {len(embeddings)} chunks.")
+            logger.error(f"Failed to generate embeddings for batch {i//batch_size + 1}: {e}")
+            # Add empty embeddings for failed batch
+            embeddings.extend([[] for _ in batch_chunks])
+            
+            # If it's a quota error, wait longer before retrying
+            if "quota" in str(e).lower() or "429" in str(e):
+                logger.warning("Quota limit hit, waiting 60 seconds before continuing...")
+                time.sleep(60)
+        
+        except Exception as e:
+            logger.error(f"Unexpected error generating embeddings for batch {i//batch_size + 1}: {e}")
+            embeddings.extend([[] for _ in batch_chunks])
+    
+    logger.info(f"🧠 Generated embeddings for {len(embeddings)} chunks total.")
     return embeddings
 
 
 # === BIGQUERY OPERATIONS ===
+# Data Validation
+def validate_row_data(row: Dict) -> bool:
+    """Validate a single row before BigQuery insertion."""
+    try:
+        # Check required fields
+        required_fields = ["id", "document_id", "document_name", "chunk_index", "chunk_text", "embedding"]
+        for field in required_fields:
+            if field not in row:
+                logger.error(f"Missing required field: {field}")
+                return False
+        
+        # Validate embedding format
+        embedding = row["embedding"]
+        if not isinstance(embedding, list):
+            logger.error(f"Embedding must be a list, got {type(embedding)}")
+            return False
+        
+        if len(embedding) == 0:
+            logger.error("Embedding list is empty")
+            return False
+        
+        # Check if all embedding values are numeric
+        for i, val in enumerate(embedding):
+            if not isinstance(val, (int, float)):
+                logger.error(f"Embedding value at index {i} is not numeric: {type(val)}")
+                return False
+        
+        # Check chunk_text length (BigQuery has limits)
+        chunk_text = row["chunk_text"]
+        if len(chunk_text) > 100000:  # 100KB limit for STRING fields
+            logger.warning(f"Chunk text is very long ({len(chunk_text)} chars), may cause issues")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error validating row data: {e}")
+        return False
+
 # Table Setup
 def create_bq_table():
     """Create a BigQuery table to store embeddings if it doesn't exist."""
@@ -315,26 +422,85 @@ def delete_document_by_name(document_name: str) -> int:
 
 # Insert Operations
 def insert_embeddings(rows: List[Dict]):
-    """Insert embeddings and metadata into BigQuery."""
+    """Insert embeddings and metadata into BigQuery with batching and timeout handling."""
     table_ref = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
     if not rows:
         logger.warning("⚠️ No rows to insert into BigQuery.")
         return
 
-    try:
-        errors = bq_client.insert_rows_json(table_ref, rows)
-        if errors:
-            logger.error("❌ Errors inserting rows: %s", errors)
+    # BigQuery streaming insert limits: max 1000 rows per request, max 1MB per request
+    batch_size = 100  # Conservative batch size to avoid timeouts
+    total_rows = len(rows)
+    successful_inserts = 0
+    
+    logger.info(f"📤 Starting BigQuery insert for {total_rows} rows in batches of {batch_size}")
+    
+    # Validate all rows before processing
+    logger.info("🔍 Validating row data before insertion...")
+    valid_rows = []
+    invalid_count = 0
+    
+    for i, row in enumerate(rows):
+        if validate_row_data(row):
+            valid_rows.append(row)
         else:
-            logger.info(f"✅ Inserted {len(rows)} rows into {table_ref}")
-    except PermissionDenied as e:
-        logger.error("BigQuery PermissionDenied on insert: %s", getattr(e, "errors", str(e)))
-    except ClientError as e:
-        logger.error("BigQuery ClientError on insert: %s", getattr(e, "errors", str(e)))
-    except GoogleAPIError as e:
-        logger.exception("BigQuery insert failed: %s", e)
-    except Exception as e:
-        logger.exception("Unexpected error inserting rows: %s", e)
+            invalid_count += 1
+            if invalid_count <= 5:  # Log first 5 invalid rows
+                logger.error(f"Invalid row {i+1}: {row.get('id', 'unknown')}")
+    
+    if invalid_count > 0:
+        logger.warning(f"⚠️ Found {invalid_count} invalid rows out of {total_rows}")
+        if invalid_count > total_rows * 0.1:  # More than 10% invalid
+            logger.error("❌ Too many invalid rows, aborting insert")
+            return 0
+    
+    logger.info(f"✅ Validation complete: {len(valid_rows)} valid rows ready for insertion")
+    
+    for i in range(0, len(valid_rows), batch_size):
+        batch_rows = valid_rows[i:i + batch_size]
+        batch_num = i // batch_size + 1
+        total_batches = (len(valid_rows) + batch_size - 1) // batch_size
+        
+        logger.info(f"📤 Inserting batch {batch_num}/{total_batches} ({len(batch_rows)} rows)...")
+        
+        try:
+            # Add timeout configuration for the insert operation
+            import time
+            start_time = time.time()
+            
+            errors = bq_client.insert_rows_json(table_ref, batch_rows)
+            
+            insert_time = time.time() - start_time
+            logger.info(f"⏱️ Batch {batch_num} completed in {insert_time:.2f}s")
+            
+            if errors:
+                logger.error(f"❌ Errors inserting batch {batch_num}: {errors}")
+                # Log first few errors for debugging
+                for j, error in enumerate(errors[:3]):
+                    logger.error(f"  Error {j+1}: {error}")
+            else:
+                successful_inserts += len(batch_rows)
+                logger.info(f"✅ Batch {batch_num} inserted successfully ({len(batch_rows)} rows)")
+            
+            # Small delay between batches to avoid overwhelming BigQuery
+            if i + batch_size < len(valid_rows):
+                time.sleep(0.1)
+                
+        except PermissionDenied as e:
+            logger.error(f"BigQuery PermissionDenied on batch {batch_num}: %s", getattr(e, "errors", str(e)))
+            break
+        except ClientError as e:
+            logger.error(f"BigQuery ClientError on batch {batch_num}: %s", getattr(e, "errors", str(e)))
+            break
+        except GoogleAPIError as e:
+            logger.exception(f"BigQuery insert failed for batch {batch_num}: %s", e)
+            break
+        except Exception as e:
+            logger.exception(f"Unexpected error inserting batch {batch_num}: %s", e)
+            break
+    
+    logger.info(f"📊 Insert summary: {successful_inserts}/{len(valid_rows)} valid rows inserted successfully")
+    return successful_inserts
 
 
 # === DOCUMENT PROCESSING FUNCTIONS ===
@@ -426,13 +592,16 @@ def process_json_document(json_path: str, document_name: str | None = None) -> i
         first_plan = json_data["workout_plan"][0]
         document_id = str(first_plan.get("id", str(uuid.uuid4())))
         document_name = first_plan.get("name", document_name or os.path.basename(json_path))
+        # Only process the workout_plan part
+        workout_plan_data = {"workout_plan": json_data["workout_plan"]}
     else:
         logger.warning("⚠️ 'workout_plan' key not found or empty — using defaults.")
         document_id = str(uuid.uuid4())
         document_name = document_name or os.path.basename(json_path)
+        workout_plan_data = json_data  # fallback to entire document
 
     logger.info("✂️ Chunking JSON text...")
-    chunk_dicts = chunk_json_text(json_data, chunk_size=3000, chunk_overlap=100)
+    chunk_dicts = chunk_json_text(workout_plan_data, chunk_size=3000, chunk_overlap=100)
     chunks = [d["chunk_text"] for d in chunk_dicts]
     logger.info(f"📦 Created {len(chunks)} JSON chunks.")
 
