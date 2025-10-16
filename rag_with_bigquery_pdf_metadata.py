@@ -56,30 +56,39 @@ GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 if not PROJECT_ID:
     raise ValueError("❌ PROJECT_ID not found in .env")
 
-if not GOOGLE_APPLICATION_CREDENTIALS or not os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
-    raise FileNotFoundError(
-        f"❌ Service account key not found. Check GOOGLE_APPLICATION_CREDENTIALS in .env: {GOOGLE_APPLICATION_CREDENTIALS}"
-    )
+# For Cloud Run deployment, we use the built-in service account
+# Only set GOOGLE_APPLICATION_CREDENTIALS if a local key file is provided
+if GOOGLE_APPLICATION_CREDENTIALS and os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_APPLICATION_CREDENTIALS
+    logger.info(f"Using service account key: {GOOGLE_APPLICATION_CREDENTIALS}")
+else:
+    logger.info("Using Cloud Run built-in service account (no local key file)")
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_APPLICATION_CREDENTIALS
+# Initialize Clients - moved to lazy initialization
+# This will be initialized when needed by the FastAPI lifespan function
+embedding_model = None
+bq_client = None
 
-# Initialize Clients
-try:
-    aiplatform.init(project=PROJECT_ID, location=LOCATION)
-    embedding_model = TextEmbeddingModel.from_pretrained(MODEL_NAME)
-    
-    # Initialize BigQuery client with timeout configuration
-    bq_client = bigquery.Client(
-        project=PROJECT_ID,
-        # Set default timeout for operations (in seconds)
-        default_query_job_config=bigquery.QueryJobConfig(
-            job_timeout_ms=300000  # 5 minutes timeout
+def initialize_clients():
+    """Initialize Google Cloud clients."""
+    global embedding_model, bq_client
+    try:
+        aiplatform.init(project=PROJECT_ID, location=LOCATION)
+        embedding_model = TextEmbeddingModel.from_pretrained(MODEL_NAME)
+        
+        # Initialize BigQuery client with timeout configuration
+        bq_client = bigquery.Client(
+            project=PROJECT_ID,
+            # Set default timeout for operations (in seconds)
+            default_query_job_config=bigquery.QueryJobConfig(
+                job_timeout_ms=300000  # 5 minutes timeout
+            )
         )
-    )
-    logger.info("✅ Vertex AI and BigQuery clients initialized successfully.")
-except GoogleAPIError as e:
-    logger.exception("Failed to initialize Google Cloud clients: %s", e)
-    raise SystemExit(1)
+        logger.info("✅ Vertex AI and BigQuery clients initialized successfully.")
+        return embedding_model, bq_client
+    except GoogleAPIError as e:
+        logger.exception("Failed to initialize Google Cloud clients: %s", e)
+        raise SystemExit(1)
 
 
 # === UTILITY FUNCTIONS ===

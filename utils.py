@@ -31,12 +31,13 @@ def load_config() -> Dict[str, Any]:
     if not project_id:
         raise ValueError("PROJECT_ID not found in .env")
 
-    if not creds_path or not os.path.exists(creds_path):
-        raise FileNotFoundError(
-            f"Service account key not found. Check GOOGLE_APPLICATION_CREDENTIALS in .env: {creds_path}"
-        )
-
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
+    # For Cloud Run deployment, we use the built-in service account
+    # Only set GOOGLE_APPLICATION_CREDENTIALS if a local key file is provided
+    if creds_path and os.path.exists(creds_path):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
+        logger.info(f"Using service account key: {creds_path}")
+    else:
+        logger.info("Using Cloud Run built-in service account (no local key file)")
 
     return {
         "PROJECT_ID": project_id,

@@ -312,7 +312,7 @@ secrets.yml
 
 # Docker
 .dockerignore
-Dockerfile
+# Dockerfile - now tracked for deployment
 docker-compose.yml
 docker-compose.yaml
 

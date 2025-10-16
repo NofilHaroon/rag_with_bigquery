@@ -14,13 +14,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, status, Depends, UploadFile, File, Header, Request
 from fastapi.responses import FileResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+# from fastapi.templating import Jinja2Templates  # Disabled for Cloud Run API-only deployment
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import bigquery
 from vertexai.language_models import TextEmbeddingModel
 from google.api_core.exceptions import GoogleAPIError
 
-from utils import load_config, initialize_clients
+from utils import load_config
+from rag_with_bigquery_pdf_metadata import initialize_clients
 from auth import verify_api_key, verify_api_key_flexible
 from models import (
     SearchRequest, SearchResponse, SearchResult,
@@ -65,11 +66,7 @@ async def lifespan(app: FastAPI):
     try:
         logger.info("🚀 Starting RAG API server...")
         config = load_config()
-        embedding_model, bq_client = initialize_clients(
-            config["PROJECT_ID"], 
-            config["LOCATION"], 
-            config["MODEL_NAME"]
-        )
+        embedding_model, bq_client = initialize_clients()
         logger.info("✅ FastAPI application initialized successfully")
     except Exception as e:
         logger.exception("❌ Failed to initialize application: %s", e)
@@ -98,8 +95,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Setup Jinja2 templates
-templates = Jinja2Templates(directory="templates")
+# Setup Jinja2 templates - Disabled for Cloud Run API-only deployment
+# templates = Jinja2Templates(directory="templates")
 
 
 # Dependency to get clients
@@ -197,29 +194,30 @@ async def health_check():
         )
 
 
-# UI endpoints (no authentication required)
+# Root endpoint for Cloud Run deployment
 @app.get("/")
 async def root():
-    """Redirect root to search page."""
-    return RedirectResponse(url="/search")
+    """API root endpoint - redirects to health check."""
+    return {"message": "RAG API is running", "health_check": "/api/v1/health", "docs": "/docs"}
 
 
-@app.get("/search")
-async def search_page(request: Request):
-    """Render the search page."""
-    return templates.TemplateResponse("search.html", {"request": request})
-
-
-@app.get("/upload")
-async def upload_page(request: Request):
-    """Render the upload page."""
-    return templates.TemplateResponse("upload.html", {"request": request})
-
-
-@app.get("/documents")
-async def documents_page(request: Request):
-    """Render the documents management page."""
-    return templates.TemplateResponse("documents.html", {"request": request})
+# UI endpoints - Disabled for Cloud Run API-only deployment
+# @app.get("/search")
+# async def search_page(request: Request):
+#     """Render the search page."""
+#     return templates.TemplateResponse("search.html", {"request": request})
+#
+#
+# @app.get("/upload")
+# async def upload_page(request: Request):
+#     """Render the upload page."""
+#     return templates.TemplateResponse("upload.html", {"request": request})
+#
+#
+# @app.get("/documents")
+# async def documents_page(request: Request):
+#     """Render the documents management page."""
+#     return templates.TemplateResponse("documents.html", {"request": request})
 
 
 # Search endpoints
